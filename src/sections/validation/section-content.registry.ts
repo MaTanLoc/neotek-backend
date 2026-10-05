@@ -25,6 +25,8 @@ const heroSlideSchema = z
     description: optionalText,
     primaryCta: ctaActionSchema,
     secondaryCta: ctaActionSchema,
+    titleLine1: optionalText,
+    titleHighlight: optionalText,
   })
   .strict();
 
@@ -119,6 +121,37 @@ const faqItemSchema = z
 
 const faqContentSchema = z.object({ items: z.array(faqItemSchema) }).strict();
 
+const solutionGroupSchema = z
+  .object({
+    key: z.string(),
+    icon: optionalText,
+    modules: z.array(z.string()),
+    eyebrow: optionalText,
+    title: optionalText,
+    description: optionalText,
+    visualLabel: optionalText,
+  })
+  .strict();
+
+const solutionGroupsContentSchema = z
+  .object({ items: z.array(solutionGroupSchema) })
+  .strict();
+
+const solutionModuleSchema = z
+  .object({
+    key: z.string(),
+    icon: optionalText,
+    visualSrc: optionalText,
+    title: optionalText,
+    description: optionalText,
+    bullets: z.array(z.string()),
+  })
+  .strict();
+
+const solutionModulesContentSchema = z
+  .object({ items: z.array(solutionModuleSchema) })
+  .strict();
+
 const emptyObjectContentSchema = z.record(z.string(), z.unknown());
 
 export const sectionContentSchemas = {
@@ -131,8 +164,8 @@ export const sectionContentSchemas = {
   testimonials: testimonialsContentSchema,
   cta: ctaContentSchema,
   faq: faqContentSchema,
-  solutionGroups: emptyObjectContentSchema,
-  solutionModules: emptyObjectContentSchema,
+  solutionGroups: solutionGroupsContentSchema,
+  solutionModules: solutionModulesContentSchema,
 } as const;
 
 export type SectionType = keyof typeof sectionContentSchemas;
@@ -201,4 +234,6 @@ export {
   testimonialsContentSchema,
   trustedLogosContentSchema,
   whyContentSchema,
+  solutionGroupsContentSchema,
+  solutionModulesContentSchema,
 };

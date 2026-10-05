@@ -17,6 +17,8 @@
     "import:localwp": "ts-node scripts/import-localwp.ts",
     "cleanup:content:dry": "ts-node scripts/cleanup-migrated-content.ts",
     "cleanup:content:apply": "ts-node scripts/cleanup-migrated-content.ts --apply",
+    "populate:solutions:dry": "ts-node scripts/populate-solutions-content.ts",
+    "populate:solutions:apply": "ts-node scripts/populate-solutions-content.ts --apply",
     "validate:sections": "ts-node scripts/validate-sections.ts",
     "admin:create": "ts-node scripts/create-admin.ts"
   },
