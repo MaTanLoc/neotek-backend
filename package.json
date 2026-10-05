@@ -15,6 +15,8 @@
     "test:cov": "jest --coverage",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "import:localwp": "ts-node scripts/import-localwp.ts",
+    "cleanup:content:dry": "ts-node scripts/cleanup-migrated-content.ts",
+    "cleanup:content:apply": "ts-node scripts/cleanup-migrated-content.ts --apply",
     "validate:sections": "ts-node scripts/validate-sections.ts",
     "admin:create": "ts-node scripts/create-admin.ts"
   },

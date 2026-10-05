@@ -4,6 +4,10 @@ import { resolve } from 'node:path';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { createClient } from 'redis';
 import { validateSectionContent } from '../src/sections/validation/section-content.registry';
+import {
+  collectNumericMediaReferences,
+  normalizeMigratedContent,
+} from '../src/content/migrated-content.normalizer';
 
 type Locale = 'vi' | 'en';
 type SourcePost = {
@@ -195,9 +199,10 @@ function valueOrUndefined(value: string | undefined): string | undefined {
 
 function buildContent(post: SourcePost, type: string): Record<string, unknown> {
   const meta = post.meta;
+  let content: Record<string, unknown>;
   switch (type) {
     case 'hero_slide':
-      return {
+      content = {
         key: valueOrUndefined(meta.slide_key) ?? post.slug,
         desktopImage: valueOrUndefined(meta.image_url),
         mobileImage: valueOrUndefined(meta.mobile_image_url),
@@ -220,50 +225,57 @@ function buildContent(post: SourcePost, type: string): Record<string, unknown> {
           url: valueOrUndefined(meta.secondary_url),
         },
       };
+      break;
     case 'why_item':
-      return {
+      content = {
         key: post.slug,
         title: post.title,
         description: valueOrUndefined(post.content),
         icon: valueOrUndefined(meta.icon),
       };
+      break;
     case 'proof_metric':
-      return {
+      content = {
         key: valueOrUndefined(meta.metric_key) ?? post.slug,
         value: toNumber(meta.value) ?? valueOrUndefined(meta.value),
         suffix: valueOrUndefined(meta.suffix),
         label: post.title,
       };
+      break;
     case 'trusted_logo':
-      return {
+      content = {
         key: post.slug,
         url: valueOrUndefined(meta.logo_url),
         alt: valueOrUndefined(meta.alt_text) ?? post.title,
       };
+      break;
     case 'solution_cluster':
-      return {
+      content = {
         key: valueOrUndefined(meta.cluster_key) ?? post.slug,
         title: post.title,
         description: valueOrUndefined(post.content),
         image: valueOrUndefined(meta.media_url),
       };
+      break;
     case 'solution_module':
-      return {
+      content = {
         key: post.slug,
         title: post.title,
         description: valueOrUndefined(post.content),
         clusterKey: valueOrUndefined(meta.cluster_key),
       };
+      break;
     case 'testimonial':
-      return {
+      content = {
         quote: valueOrUndefined(post.content),
         name: valueOrUndefined(meta.person_name) ?? post.title,
         role: valueOrUndefined(meta.role),
         company: valueOrUndefined(meta.organization),
         image: valueOrUndefined(meta.avatar),
       };
+      break;
     case 'cta_section':
-      return {
+      content = {
         eyebrow: valueOrUndefined(meta.eyebrow),
         title: post.title,
         description: valueOrUndefined(post.content),
@@ -276,14 +288,17 @@ function buildContent(post: SourcePost, type: string): Record<string, unknown> {
           url: valueOrUndefined(meta.secondary_url),
         },
       };
+      break;
     case 'faq':
-      return {
+      content = {
         question: post.title,
         answer: post.content,
       };
+      break;
     default:
-      return {};
+      content = {};
   }
+  return normalizeMigratedContent(content);
 }
 
 function addItems(
@@ -357,6 +372,17 @@ function normalizeWordPressData(posts: SourcePost[]): ImportPlan {
     'solution_module',
   );
   addItems(plan, 'home', 'testimonials', localizedRecords(posts, 'testimonial', plan.skipped), 'testimonial');
+  posts
+    .filter((post) => post.type === 'testimonial')
+    .forEach((post) => {
+      const image = valueOrUndefined(post.meta.avatar);
+      if (
+        image &&
+        collectNumericMediaReferences(image, '$.avatar').length > 0
+      ) {
+        plan.unresolvedMedia.push(`testimonial:${post.id}:avatar=${image}`);
+      }
+    });
 
   const trustedLogos = posts
     .filter(
