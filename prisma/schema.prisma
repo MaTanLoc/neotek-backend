@@ -1,0 +1,127 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  EDITOR
+}
+
+enum PageStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String?
+  role         UserRole  @default(EDITOR)
+  active       Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model Page {
+  id           String            @id @default(cuid())
+  slug         String            @unique
+  status       PageStatus        @default(DRAFT)
+  publishedAt  DateTime?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  translations PageTranslation[]
+  sections     PageSection[]
+}
+
+model PageTranslation {
+  id             String   @id @default(cuid())
+  pageId         String
+  locale         String
+  title          String
+  seoTitle       String?
+  seoDescription String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  page           Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([pageId, locale])
+  @@index([locale])
+}
+
+model PageSection {
+  id           String                   @id @default(cuid())
+  pageId       String
+  key          String
+  type         String
+  sortOrder    Int                      @default(0)
+  enabled      Boolean                  @default(true)
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  page         Page                     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  translations PageSectionTranslation[]
+
+  @@unique([pageId, key])
+  @@index([pageId, sortOrder])
+  @@index([type])
+}
+
+model PageSectionTranslation {
+  id        String      @id @default(cuid())
+  sectionId String
+  locale    String
+  content   Json
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  section   PageSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@unique([sectionId, locale])
+  @@index([locale])
+}
+
+model Media {
+  id           String   @id @default(cuid())
+  filename     String
+  originalName String?
+  mimeType     String
+  size         Int?
+  width        Int?
+  height       Int?
+  url          String
+  alt          String?
+  provider     String?
+  providerKey  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([provider, providerKey])
+}
+
+model SiteSetting {
+  id           String                   @id @default(cuid())
+  key          String                   @unique
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+  translations SiteSettingTranslation[]
+}
+
+model SiteSettingTranslation {
+  id        String      @id @default(cuid())
+  settingId String
+  locale    String
+  value     Json
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  setting   SiteSetting @relation(fields: [settingId], references: [id], onDelete: Cascade)
+
+  @@unique([settingId, locale])
+  @@index([locale])
+}
