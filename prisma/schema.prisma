@@ -18,6 +18,11 @@ enum PageStatus {
   ARCHIVED
 }
 
+enum PageKind {
+  STANDARD
+  SOLUTION_DETAIL
+}
+
 model User {
   id           String    @id @default(cuid())
   email        String    @unique
@@ -33,12 +38,15 @@ model User {
 model Page {
   id           String            @id @default(cuid())
   slug         String            @unique
+  kind         PageKind          @default(STANDARD)
   status       PageStatus        @default(DRAFT)
   publishedAt  DateTime?
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
   translations PageTranslation[]
   sections     PageSection[]
+
+  @@index([kind, status])
 }
 
 model PageTranslation {

@@ -10,6 +10,11 @@ export class PagesController {
     this.pagesService = pagesService;
   }
 
+  @Get('solution-details')
+  listSolutionDetails() {
+    return this.pagesService.listSolutionDetails();
+  }
+
   @Get(':slug')
   findPublicPage(
     @Param('slug') slug: string,

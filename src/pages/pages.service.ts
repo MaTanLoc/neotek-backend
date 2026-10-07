@@ -1,12 +1,18 @@
+import { resolveSharedTranslations } from '../sections/shared-content';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CacheService } from '../cache/cache.service';
 import { buildPageCacheKey } from '../cache/cache-keys';
 import { PrismaService } from '../prisma/prisma.service';
 import { GetPageQueryDto } from './dto/get-page-query.dto';
+import { detailAvailability } from './solution-detail';
+import { articleText } from '../sections/validation/solution-detail.schemas';
 
 const PAGE_CACHE_TTL_SECONDS = 300;
 
 export type PublicPageResponse = {
+  kind?: string;
+  publishedAt?: string | null;
+  updatedAt?: string;
   slug: string;
   locale: string;
   title: string;
@@ -32,6 +38,10 @@ export class PagesService {
     this.cache = cache;
   }
 
+  listSolutionDetails() {
+    return detailAvailability(this.prisma, true);
+  }
+
   async findPublicPage(
     slug: string,
     query: GetPageQueryDto,
@@ -43,7 +53,31 @@ export class PagesService {
       const cachedPage = await this.cache.get(cacheKey);
       if (cachedPage) {
         try {
-          return JSON.parse(cachedPage) as PublicPageResponse;
+          const cached = JSON.parse(cachedPage) as PublicPageResponse;
+          if (cached.kind !== 'SOLUTION_DETAIL') return cached;
+          // A stale Redis entry must never expose an unpublished detail.
+          const current = await this.prisma.page.findUnique({
+            where: { slug },
+            select: {
+              kind: true,
+              status: true,
+              updatedAt: true,
+              sections: {
+                where: { key: { in: ['hero', 'article'] } },
+                select: { enabled: true, key: true },
+              },
+            },
+          });
+          if (
+            !current ||
+            current.kind !== 'SOLUTION_DETAIL' ||
+            current.status !== 'PUBLISHED' ||
+            current.sections.length !== 2 ||
+            current.sections.some((section) => !section.enabled)
+          )
+            throw new NotFoundException('Solution detail not published');
+          if (cached.updatedAt === current.updatedAt.toISOString())
+            return cached;
         } catch (error) {
           this.logger.warn(
             `Invalid cached page response for ${cacheKey}: ${
@@ -61,7 +95,7 @@ export class PagesService {
       );
     }
 
-    // Published-only filtering belongs to the publishing workflow phase.
+    // Standard-page delivery remains unchanged; solution details are published-only.
     const page = await this.prisma.page.findUnique({
       where: { slug },
       include: {
@@ -84,6 +118,16 @@ export class PagesService {
       throw new NotFoundException(`Page not found: ${slug}`);
     }
 
+    if (
+      page.kind === 'SOLUTION_DETAIL' &&
+      (page.status !== 'PUBLISHED' ||
+        !page.sections.some(
+          (section) => section.type === 'solutionDetailHero',
+        ) ||
+        !page.sections.some((section) => section.type === 'solutionArticle'))
+    )
+      throw new NotFoundException('Solution detail not found');
+
     const translation = page.translations[0];
     if (!translation) {
       throw new NotFoundException(
@@ -91,7 +135,33 @@ export class PagesService {
       );
     }
 
+    for (const section of page.sections)
+      section.translations = (await resolveSharedTranslations(
+        this.prisma,
+        section.translations,
+      )) as typeof section.translations;
+
+    if (page.kind === 'SOLUTION_DETAIL') {
+      const doc = (
+        page.sections.find((section) => section.type === 'solutionArticle')
+          ?.translations[0]?.content as {
+          doc?: Parameters<typeof articleText>[0];
+        }
+      )?.doc;
+      if (!translation.title.trim() || !doc || !articleText(doc))
+        throw new NotFoundException(
+          'Solution detail translation not published',
+        );
+    }
+
     const response: PublicPageResponse = {
+      ...(page.kind === 'SOLUTION_DETAIL'
+        ? {
+            kind: page.kind,
+            publishedAt: page.publishedAt?.toISOString() ?? null,
+            updatedAt: page.updatedAt.toISOString(),
+          }
+        : {}),
       slug: page.slug,
       locale,
       title: translation.title,

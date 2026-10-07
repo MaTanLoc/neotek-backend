@@ -59,6 +59,21 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     await this.client.del(key);
   }
 
+  async getOrCreateSessionToken(
+    sessionKey: string,
+    csrfKey: string,
+    candidate: string,
+  ): Promise<string | null> {
+    // One atomic operation: concurrent requests share a token, and its initial
+    // expiry cannot outlive the remaining session lifetime.
+    const result = await this.client.eval(
+      'local ttl = redis.call("TTL", KEYS[1]); if ttl <= 0 then return nil end; local token = redis.call("GET", KEYS[2]); if token then return token end; redis.call("SET", KEYS[2], ARGV[1], "EX", ttl); return ARGV[1]',
+      { keys: [sessionKey, csrfKey], arguments: [candidate] },
+    );
+    if (result === null || typeof result === 'string') return result;
+    throw new Error('Unexpected Redis CSRF response');
+  }
+
   async incrementWithExpiry(key: string, ttlSeconds: number): Promise<number> {
     const result = await this.client.eval(
       'local count = redis.call("INCR", KEYS[1]); if count == 1 then redis.call("EXPIRE", KEYS[1], ARGV[1]); end; return count',

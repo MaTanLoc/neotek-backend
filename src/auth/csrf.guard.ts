@@ -2,6 +2,7 @@ import {
   CanActivate,
   ExecutionContext,
   Injectable,
+  ForbiddenException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { AuthenticatedRequest } from './auth.types';
@@ -23,16 +24,13 @@ export class CsrfGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const sessionToken = request.cookies?.[ADMIN_SESSION_COOKIE];
+    if (!sessionToken)
+      throw new UnauthorizedException('Authentication required');
     const header = request.headers?.[CSRF_HEADER];
     const headerToken = Array.isArray(header) ? header[0] : header;
     const cookieToken = request.cookies?.[CSRF_COOKIE];
-    if (
-      !sessionToken ||
-      !headerToken ||
-      !cookieToken ||
-      headerToken !== cookieToken
-    ) {
-      throw new UnauthorizedException('Invalid CSRF token');
+    if (!headerToken || !cookieToken || headerToken !== cookieToken) {
+      throw new ForbiddenException('Invalid CSRF token');
     }
     await this.authService.validateCsrfToken(sessionToken, headerToken);
     return true;

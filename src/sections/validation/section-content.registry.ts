@@ -1,6 +1,31 @@
 import { z } from 'zod';
+import {
+  solutionDetailHeroSchema,
+  solutionArticleSchema,
+  relatedSolutionsSchema,
+} from './solution-detail.schemas';
 
 const optionalText = z.string().nullable().optional();
+const sectionCopy = {
+  eyebrow: optionalText,
+  title: optionalText,
+  titleHighlight: optionalText,
+  description: optionalText,
+  ctaLabel: optionalText,
+  ctaUrl: optionalText,
+  actions: z
+    .array(
+      z
+        .object({
+          key: z.string(),
+          label: z.string(),
+          url: optionalText,
+          variant: z.enum(['primary', 'secondary', 'ghost']).optional(),
+        })
+        .strict(),
+    )
+    .optional(),
+};
 
 const ctaActionSchema = z
   .object({
@@ -43,11 +68,14 @@ const whyItemSchema = z
   })
   .strict();
 
-const whyContentSchema = z.object({ items: z.array(whyItemSchema) }).strict();
+const whyContentSchema = z
+  .object({ ...sectionCopy, items: z.array(whyItemSchema) })
+  .strict();
 
 const proofMetricSchema = z
   .object({
     key: z.string(),
+    subtitle: optionalText,
     label: z.string(),
     value: z.union([z.number(), z.string()]),
     suffix: optionalText,
@@ -55,24 +83,30 @@ const proofMetricSchema = z
   .strict();
 
 const proofMetricsContentSchema = z
-  .object({ items: z.array(proofMetricSchema) })
+  .object({ ...sectionCopy, items: z.array(proofMetricSchema) })
   .strict();
 
 const trustedLogoSchema = z
   .object({
     key: z.string(),
     alt: z.string(),
+    width: z.number().min(1).max(800).optional(),
+    maxWidth: z.number().min(1).max(800).optional(),
+    height: z.number().min(1).max(800).optional(),
+    scale: z.number().min(0.25).max(3).optional(),
+    objectFit: z.enum(['contain', 'cover']).optional(),
     url: optionalText,
   })
   .strict();
 
 const trustedLogosContentSchema = z
-  .object({ items: z.array(trustedLogoSchema) })
+  .object({ ...sectionCopy, items: z.array(trustedLogoSchema) })
   .strict();
 
 const solutionItemSchema = z
   .object({
     key: z.string(),
+    label: optionalText,
     title: z.string(),
     description: optionalText,
     image: optionalText,
@@ -81,21 +115,25 @@ const solutionItemSchema = z
   .strict();
 
 const solutionClustersContentSchema = z
-  .object({ items: z.array(solutionItemSchema) })
+  .object({ ...sectionCopy, items: z.array(solutionItemSchema) })
   .strict();
 
 const testimonialSchema = z
   .object({
+    key: z.string().optional(),
     quote: optionalText,
     name: z.string(),
     role: optionalText,
     company: optionalText,
     image: optionalText,
+    focalX: z.number().min(0).max(100).optional(),
+    focalY: z.number().min(0).max(100).optional(),
+    zoom: z.number().min(1).max(2.5).optional(),
   })
   .strict();
 
 const testimonialsContentSchema = z
-  .object({ items: z.array(testimonialSchema) })
+  .object({ ...sectionCopy, items: z.array(testimonialSchema) })
   .strict();
 
 const ctaSectionSchema = z
@@ -103,8 +141,12 @@ const ctaSectionSchema = z
     eyebrow: optionalText,
     title: z.string(),
     description: optionalText,
-    primary: ctaActionSchema.omit({ enabled: true }),
-    secondary: ctaActionSchema.omit({ enabled: true }),
+    primary: ctaActionSchema.extend({
+      variant: z.enum(['primary', 'secondary', 'ghost']).optional(),
+    }),
+    secondary: ctaActionSchema.extend({
+      variant: z.enum(['primary', 'secondary', 'ghost']).optional(),
+    }),
   })
   .strict();
 
@@ -114,12 +156,15 @@ const ctaContentSchema = z
 
 const faqItemSchema = z
   .object({
+    key: z.string().optional(),
     question: z.string(),
     answer: z.string(),
   })
   .strict();
 
-const faqContentSchema = z.object({ items: z.array(faqItemSchema) }).strict();
+const faqContentSchema = z
+  .object({ ...sectionCopy, items: z.array(faqItemSchema) })
+  .strict();
 
 const solutionGroupSchema = z
   .object({
@@ -130,16 +175,23 @@ const solutionGroupSchema = z
     title: optionalText,
     description: optionalText,
     visualLabel: optionalText,
+    visualSrc: optionalText,
   })
   .strict();
 
 const solutionGroupsContentSchema = z
-  .object({ items: z.array(solutionGroupSchema) })
+  .object({ ...sectionCopy, items: z.array(solutionGroupSchema) })
   .strict();
 
 const solutionModuleSchema = z
   .object({
     key: z.string(),
+    slug: z
+      .string()
+      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+      .or(z.literal(''))
+      .optional(),
+    ctaLabel: optionalText,
     icon: optionalText,
     visualSrc: optionalText,
     title: optionalText,
@@ -149,15 +201,45 @@ const solutionModuleSchema = z
   .strict();
 
 const solutionModulesContentSchema = z
-  .object({ items: z.array(solutionModuleSchema) })
+  .object({ ...sectionCopy, items: z.array(solutionModuleSchema) })
   .strict();
 
-const emptyObjectContentSchema = z.record(z.string(), z.unknown());
+const solutionOverviewContentSchema = z
+  .object({
+    ...sectionCopy,
+    items: z
+      .array(
+        z
+          .object({
+            key: z.string(),
+            title: z.string(),
+            description: optionalText,
+            image: optionalText,
+            imagePosition: optionalText,
+            modules: z.array(
+              z
+                .object({
+                  key: z.string(),
+                  title: z.string(),
+                  icon: optionalText,
+                  url: optionalText,
+                })
+                .strict(),
+            ),
+          })
+          .strict(),
+      )
+      .optional(),
+  })
+  .strict();
 
 export const sectionContentSchemas = {
+  solutionDetailHero: solutionDetailHeroSchema,
+  solutionArticle: solutionArticleSchema,
+  relatedSolutions: relatedSolutionsSchema,
   hero: heroContentSchema,
   why: whyContentSchema,
-  solutionOverview: emptyObjectContentSchema,
+  solutionOverview: solutionOverviewContentSchema,
   proofMetrics: proofMetricsContentSchema,
   trustedLogos: trustedLogosContentSchema,
   solutionClusters: solutionClustersContentSchema,
@@ -206,7 +288,10 @@ export function validateSectionContent(
     content !== null &&
     typeof content === 'object' &&
     !Array.isArray(content) &&
-    Object.keys(content).length === 0
+    Object.keys(content).length === 0 &&
+    !['solutionDetailHero', 'solutionArticle', 'relatedSolutions'].includes(
+      sectionType,
+    )
   ) {
     return content as ValidatedSectionContent;
   }

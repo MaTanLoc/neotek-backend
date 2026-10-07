@@ -26,6 +26,91 @@ describe('AdminService', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
+  it('rejects single-locale FAQ structural changes', async () => {
+    const service = new AdminService(prisma as never, pageCache as never);
+    prisma.pageSection.findUnique.mockResolvedValue({
+      type: 'faq',
+      translations: [{ locale: 'vi', content: { items: [] } }],
+      page: { slug: 'home' },
+    });
+    await expect(
+      service.updateSectionTranslation('faq', 'vi', {
+        content: { items: [{ key: 'new', question: '', answer: '' }] },
+      }),
+    ).rejects.toThrow('structure');
+    expect(prisma.pageSectionTranslation.upsert).not.toHaveBeenCalled();
+  });
+
+  it('saves repeated bilingual items atomically and invalidates both locales', async () => {
+    const service = new AdminService(prisma as never, pageCache as never);
+    prisma.pageSection.findUnique.mockResolvedValue({
+      type: 'faq',
+      translations: [],
+      page: { slug: 'home' },
+    });
+    prisma.$transaction.mockImplementation(async (callback) =>
+      callback(prisma),
+    );
+    prisma.pageSectionTranslation.upsert.mockImplementation(
+      async ({ create }) => create,
+    );
+    const content = { items: [{ key: 'same', question: 'Q', answer: 'A' }] };
+    await service.updateSectionTranslations('faq', {
+      translations: { vi: { content }, en: { content } },
+    });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.pageSectionTranslation.upsert).toHaveBeenCalledTimes(2);
+    expect(pageCache.invalidatePageLocales).toHaveBeenCalledWith('home', [
+      'vi',
+      'en',
+    ]);
+  });
+
+  it('rejects divergent keys before starting a transaction', async () => {
+    const service = new AdminService(prisma as never, pageCache as never);
+    prisma.pageSection.findUnique.mockResolvedValue({
+      type: 'faq',
+      translations: [],
+      page: { slug: 'home' },
+    });
+    await expect(
+      service.updateSectionTranslations('faq', {
+        translations: {
+          vi: {
+            content: { items: [{ key: 'vi-only', question: '', answer: '' }] },
+          },
+          en: { content: { items: [] } },
+        },
+      }),
+    ).rejects.toThrow('same keys');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('preserves legacy divergent arrays during bilingual text edits', async () => {
+    const service = new AdminService(prisma as never, pageCache as never);
+    const vi = { items: [{ key: 'legacy', question: 'Q', answer: 'A' }] },
+      en = { items: [] };
+    prisma.pageSection.findUnique.mockResolvedValue({
+      type: 'faq',
+      translations: [
+        { locale: 'vi', content: vi },
+        { locale: 'en', content: en },
+      ],
+      page: { slug: 'home' },
+    });
+    prisma.$transaction.mockImplementation(async (callback) =>
+      callback(prisma),
+    );
+    await expect(
+      service.updateSectionTranslations('faq', {
+        translations: {
+          vi: { content: { items: [{ ...vi.items[0], answer: 'Changed' }] } },
+          en: { content: en },
+        },
+      }),
+    ).resolves.toBeDefined();
+  });
+
   it('creates a normalized draft page transactionally', async () => {
     const service = new AdminService(prisma as never, pageCache as never);
     prisma.$transaction.mockImplementation(async (callback) =>
@@ -96,6 +181,12 @@ describe('AdminService', () => {
     prisma.pageSection.findUnique.mockResolvedValue({
       id: 'section-1',
       type: 'faq',
+      translations: [
+        {
+          locale: 'vi',
+          content: { items: [{ question: 'Old', answer: 'Old' }] },
+        },
+      ],
       page: { slug: 'home' },
     });
     prisma.pageSectionTranslation.upsert.mockResolvedValue({

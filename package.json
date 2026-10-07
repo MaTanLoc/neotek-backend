@@ -20,7 +20,8 @@
     "populate:solutions:dry": "ts-node scripts/populate-solutions-content.ts",
     "populate:solutions:apply": "ts-node scripts/populate-solutions-content.ts --apply",
     "validate:sections": "ts-node scripts/validate-sections.ts",
-    "admin:create": "ts-node scripts/create-admin.ts"
+    "admin:create": "ts-node scripts/create-admin.ts",
+    "content:solution-detail-demo": "ts-node scripts/solution-detail-demo.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",

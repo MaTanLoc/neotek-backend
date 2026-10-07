@@ -6,6 +6,7 @@ describe('AuthService', () => {
     set: jest.fn(),
     get: jest.fn(),
     del: jest.fn(),
+    getOrCreateSessionToken: jest.fn(),
   };
   const prisma = {
     user: {
@@ -15,7 +16,7 @@ describe('AuthService', () => {
   };
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
   });
 
   it('creates an opaque Redis session and returns safe user data', async () => {
@@ -76,5 +77,53 @@ describe('AuthService', () => {
     await expect(service.getAuthenticatedUser('token')).rejects.toThrow(
       'Authentication service unavailable',
     );
+    await expect(service.getAuthenticatedUser('token')).rejects.toMatchObject({
+      status: 500,
+    });
+  });
+
+  it('returns the existing session-scoped CSRF token without overwriting it', async () => {
+    const service = new AuthService(prisma as never, cache as never);
+    cache.getOrCreateSessionToken.mockResolvedValue('existing-token');
+    expect(await service.createCsrfToken('session')).toBe('existing-token');
+    expect(cache.getOrCreateSessionToken).toHaveBeenCalledWith(
+      expect.stringMatching(/^auth:session:/),
+      expect.stringMatching(/^auth:csrf:/),
+      expect.any(String),
+    );
+    expect(cache.set).not.toHaveBeenCalled();
+  });
+
+  it('returns 401 if the session expires during CSRF acquisition', async () => {
+    const service = new AuthService(prisma as never, cache as never);
+    cache.getOrCreateSessionToken.mockResolvedValue(null);
+    await expect(service.createCsrfToken('session')).rejects.toMatchObject({
+      status: 401,
+    });
+  });
+
+  it.each([null, 'different-token', 'é'.repeat(43)])(
+    'returns 403 for invalid CSRF without deleting the session (%s)',
+    async (expected) => {
+      const service = new AuthService(prisma as never, cache as never);
+      cache.get.mockResolvedValue(expected);
+      await expect(
+        service.validateCsrfToken('session', 'x'.repeat(43)),
+      ).rejects.toMatchObject({ status: 403 });
+      expect(cache.del).not.toHaveBeenCalled();
+    },
+  );
+
+  it('fails closed with 500, not 401, when CSRF storage is unavailable', async () => {
+    const service = new AuthService(prisma as never, cache as never);
+    cache.get.mockRejectedValue(new Error('Redis down'));
+    cache.getOrCreateSessionToken.mockRejectedValue(new Error('Redis down'));
+    await expect(service.createCsrfToken('session')).rejects.toMatchObject({
+      status: 500,
+    });
+    await expect(
+      service.validateCsrfToken('session', 'csrf'),
+    ).rejects.toMatchObject({ status: 500 });
+    expect(cache.del).not.toHaveBeenCalled();
   });
 });

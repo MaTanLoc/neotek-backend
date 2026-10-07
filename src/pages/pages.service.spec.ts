@@ -24,6 +24,66 @@ describe('PagesService', () => {
     cacheDel.mockReset().mockResolvedValue(undefined);
   });
 
+  it.each(['DRAFT', 'ARCHIVED'])(
+    'hides %s solution details publicly',
+    async (status) => {
+      pageFindUnique.mockResolvedValue({
+        kind: 'SOLUTION_DETAIL',
+        status,
+        sections: [],
+      });
+      await expect(
+        service.findPublicPage('detail', { locale: 'vi' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(cacheSet).not.toHaveBeenCalled();
+    },
+  );
+  it('returns a published detail and hides its empty English translation', async () => {
+    const page = {
+      slug: 'detail',
+      kind: 'SOLUTION_DETAIL',
+      status: 'PUBLISHED',
+      publishedAt: new Date(),
+      updatedAt: new Date(),
+      translations: [{ title: 'Detail', seoTitle: null, seoDescription: null }],
+      sections: [
+        {
+          key: 'hero',
+          type: 'solutionDetailHero',
+          translations: [{ locale: 'vi', content: {} }],
+        },
+        {
+          key: 'article',
+          type: 'solutionArticle',
+          translations: [
+            {
+              locale: 'vi',
+              content: {
+                doc: {
+                  type: 'doc',
+                  content: [
+                    {
+                      type: 'paragraph',
+                      content: [{ type: 'text', text: 'Readable article' }],
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+    pageFindUnique.mockResolvedValue(page);
+    expect(
+      (await service.findPublicPage('detail', { locale: 'vi' })).kind,
+    ).toBe('SOLUTION_DETAIL');
+    page.translations[0].title = '';
+    await expect(
+      service.findPublicPage('detail', { locale: 'en' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
   it('returns the Vietnamese home page by default', async () => {
     pageFindUnique.mockResolvedValue({
       slug: 'home',

@@ -1,5 +1,6 @@
 import {
   Injectable,
+  ForbiddenException,
   InternalServerErrorException,
   Logger,
   UnauthorizedException,
@@ -103,7 +104,9 @@ export class AuthService {
       this.logger.error(
         `Admin session lookup unavailable: ${error instanceof Error ? error.message : String(error)}`,
       );
-      throw new UnauthorizedException('Authentication service unavailable');
+      throw new InternalServerErrorException(
+        'Authentication service unavailable',
+      );
     }
 
     if (!serialized) {
@@ -139,19 +142,22 @@ export class AuthService {
   }
 
   async createCsrfToken(sessionToken: string): Promise<string> {
-    const token = randomBytes(32).toString('base64url');
+    let token: string | null;
     try {
-      await this.cache.set(
+      token = await this.cache.getOrCreateSessionToken(
+        this.sessionKey(sessionToken),
         this.csrfKey(sessionToken),
-        token,
-        ADMIN_SESSION_TTL_SECONDS,
+        randomBytes(32).toString('base64url'),
       );
     } catch (error) {
       this.logger.error(
         `CSRF token store unavailable: ${error instanceof Error ? error.message : String(error)}`,
       );
-      throw new UnauthorizedException('Authentication service unavailable');
+      throw new InternalServerErrorException(
+        'Authentication service unavailable',
+      );
     }
+    if (!token) throw new UnauthorizedException('Invalid or expired session');
     return token;
   }
 
@@ -163,14 +169,16 @@ export class AuthService {
       this.logger.error(
         `CSRF token lookup unavailable: ${error instanceof Error ? error.message : String(error)}`,
       );
-      throw new UnauthorizedException('Authentication service unavailable');
+      throw new InternalServerErrorException(
+        'Authentication service unavailable',
+      );
     }
     if (
       !expected ||
-      expected.length !== token.length ||
+      Buffer.byteLength(expected) !== Buffer.byteLength(token) ||
       !timingSafeEqual(Buffer.from(expected), Buffer.from(token))
     ) {
-      throw new UnauthorizedException('Invalid CSRF token');
+      throw new ForbiddenException('Invalid CSRF token');
     }
   }
 
@@ -182,7 +190,9 @@ export class AuthService {
       this.logger.error(
         `Admin session revoke failed: ${error instanceof Error ? error.message : String(error)}`,
       );
-      throw new UnauthorizedException('Authentication service unavailable');
+      throw new InternalServerErrorException(
+        'Authentication service unavailable',
+      );
     }
   }
 

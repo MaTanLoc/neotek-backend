@@ -27,6 +27,28 @@ export class AdminController {
     this.service = service;
   }
 
+  @Get('solutions')
+  listSolutionDetails() {
+    return this.service.listSolutionDetails();
+  }
+
+  @Get('solutions/:slug')
+  getSolutionDetail(@Param('slug') slug: string) {
+    return this.service.getSolutionDetail(slug);
+  }
+
+  @Post('solutions')
+  @UseGuards(CsrfGuard, OriginGuard)
+  createSolutionDetail(@Body() body: unknown) {
+    return this.service.createSolutionDetail(body);
+  }
+
+  @Put('solutions/:id')
+  @UseGuards(CsrfGuard, OriginGuard)
+  saveSolutionDetail(@Param('id') id: string, @Body() body: unknown) {
+    return this.service.saveSolutionDetail(id, body);
+  }
+
   @Get('pages')
   listPages() {
     return this.service.listPages();
@@ -89,6 +111,15 @@ export class AdminController {
     @Body() body: unknown,
   ) {
     return this.service.updateSectionTranslation(sectionId, locale, body);
+  }
+
+  @Put('sections/:sectionId/translations')
+  @UseGuards(CsrfGuard, OriginGuard)
+  updateSectionTranslations(
+    @Param('sectionId') sectionId: string,
+    @Body() body: unknown,
+  ) {
+    return this.service.updateSectionTranslations(sectionId, body);
   }
 
   @Put('pages/:pageId/sections/order')
