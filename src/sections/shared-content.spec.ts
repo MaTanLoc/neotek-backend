@@ -114,6 +114,7 @@ describe('canonical section content', () => {
     const { db } = setup();
     const page = jest.fn(async ({ where }) => ({
       slug: where.slug,
+      status: 'PUBLISHED',
       translations: [{ title: 'Page', seoTitle: null, seoDescription: null }],
       sections: [{ key: 'faq', type: 'faq', translations: [refs[1]] }],
     }));

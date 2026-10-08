@@ -24,20 +24,21 @@ describe('PagesService', () => {
     cacheDel.mockReset().mockResolvedValue(undefined);
   });
 
-  it.each(['DRAFT', 'ARCHIVED'])(
-    'hides %s solution details publicly',
-    async (status) => {
-      pageFindUnique.mockResolvedValue({
-        kind: 'SOLUTION_DETAIL',
-        status,
-        sections: [],
-      });
-      await expect(
-        service.findPublicPage('detail', { locale: 'vi' }),
-      ).rejects.toBeInstanceOf(NotFoundException);
-      expect(cacheSet).not.toHaveBeenCalled();
-    },
-  );
+  it.each(
+    ['DRAFT', 'ARCHIVED'].flatMap((status) =>
+      ['STANDARD', 'SOLUTION_DETAIL'].map((kind) => [status, kind]),
+    ),
+  )('hides %s %s pages publicly', async (status, kind) => {
+    pageFindUnique.mockResolvedValue({
+      kind,
+      status,
+      sections: [],
+    });
+    await expect(
+      service.findPublicPage('detail', { locale: 'vi' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(cacheSet).not.toHaveBeenCalled();
+  });
   it('returns a published detail and hides its empty English translation', async () => {
     const page = {
       slug: 'detail',
@@ -87,6 +88,7 @@ describe('PagesService', () => {
   it('returns the Vietnamese home page by default', async () => {
     pageFindUnique.mockResolvedValue({
       slug: 'home',
+      status: 'PUBLISHED',
       translations: [
         {
           title: 'Trang chủ',
@@ -124,6 +126,7 @@ describe('PagesService', () => {
   it('returns the requested English page', async () => {
     pageFindUnique.mockResolvedValue({
       slug: 'home',
+      status: 'PUBLISHED',
       translations: [
         {
           title: 'Home',
@@ -145,6 +148,7 @@ describe('PagesService', () => {
   it('preserves sort order and excludes disabled or untranslated sections', async () => {
     pageFindUnique.mockResolvedValue({
       slug: 'home',
+      status: 'PUBLISHED',
       translations: [{ title: 'Home', seoTitle: null, seoDescription: null }],
       sections: [
         {
@@ -188,6 +192,7 @@ describe('PagesService', () => {
   it('throws a 404 when the requested translation does not exist', async () => {
     pageFindUnique.mockResolvedValue({
       slug: 'home',
+      status: 'PUBLISHED',
       translations: [],
       sections: [],
     });
@@ -199,27 +204,30 @@ describe('PagesService', () => {
     );
   });
 
-  it('returns a cached page without querying Prisma', async () => {
+  it('rechecks publication before returning a cached page', async () => {
     const cachedPage = {
       slug: 'home',
+      status: 'PUBLISHED',
       locale: 'vi',
       title: 'Trang chủ',
       seo: { title: null, description: null },
       sections: [],
     };
     cacheGet.mockResolvedValue(JSON.stringify(cachedPage));
+    pageFindUnique.mockResolvedValue({ kind: 'STANDARD', status: 'PUBLISHED' });
 
     await expect(service.findPublicPage('home', {})).resolves.toEqual(
       cachedPage,
     );
 
-    expect(pageFindUnique).not.toHaveBeenCalled();
+    expect(pageFindUnique).toHaveBeenCalled();
     expect(cacheGet).toHaveBeenCalledWith('cms:page:home:vi');
   });
 
   it('queries Prisma and caches a page on a cache miss', async () => {
     pageFindUnique.mockResolvedValue({
       slug: 'home',
+      status: 'PUBLISHED',
       translations: [{ title: 'Home', seoTitle: null, seoDescription: null }],
       sections: [],
     });
@@ -238,6 +246,7 @@ describe('PagesService', () => {
     cacheGet.mockRejectedValue(new Error('Redis unavailable'));
     pageFindUnique.mockResolvedValue({
       slug: 'home',
+      status: 'PUBLISHED',
       translations: [{ title: 'Home', seoTitle: null, seoDescription: null }],
       sections: [],
     });
@@ -252,6 +261,7 @@ describe('PagesService', () => {
     cacheSet.mockRejectedValue(new Error('Redis unavailable'));
     pageFindUnique.mockResolvedValue({
       slug: 'home',
+      status: 'PUBLISHED',
       translations: [{ title: 'Home', seoTitle: null, seoDescription: null }],
       sections: [],
     });
@@ -265,6 +275,7 @@ describe('PagesService', () => {
     cacheGet.mockResolvedValue('{invalid');
     pageFindUnique.mockResolvedValue({
       slug: 'home',
+      status: 'PUBLISHED',
       translations: [{ title: 'Home', seoTitle: null, seoDescription: null }],
       sections: [],
     });
@@ -278,5 +289,87 @@ describe('PagesService', () => {
       JSON.stringify(result),
       300,
     );
+  });
+});
+
+describe('public publication cache boundary', () => {
+  it('returns a cached published detail only after checking current status/version/visibility', async () => {
+    const updatedAt = new Date();
+    const response = {
+      slug: 'detail',
+      kind: 'SOLUTION_DETAIL',
+      updatedAt: updatedAt.toISOString(),
+      sections: [],
+    };
+    const findUnique = jest.fn().mockResolvedValue({
+      kind: 'SOLUTION_DETAIL',
+      status: 'PUBLISHED',
+      updatedAt,
+      sections: [
+        { key: 'hero', enabled: true },
+        { key: 'article', enabled: true },
+      ],
+    });
+    const service = new PagesService(
+      { page: { findUnique } } as never,
+      { get: jest.fn().mockResolvedValue(JSON.stringify(response)) } as never,
+    );
+    await expect(service.findPublicPage('detail', {})).resolves.toEqual(
+      response,
+    );
+    expect(findUnique).toHaveBeenCalled();
+  });
+  it.each(['STANDARD', 'SOLUTION_DETAIL'])(
+    'blocks draft, archived and missing %s even with stale cache',
+    async (kind) => {
+      for (const status of ['DRAFT', 'ARCHIVED', null]) {
+        const findUnique = jest
+          .fn()
+          .mockResolvedValue(status ? { kind, status, sections: [] } : null);
+        const service = new PagesService(
+          { page: { findUnique } } as never,
+          {
+            get: jest
+              .fn()
+              .mockResolvedValue(
+                JSON.stringify({ slug: 'hidden', kind, sections: [] }),
+              ),
+            del: jest.fn().mockResolvedValue(undefined),
+            set: jest.fn(),
+          } as never,
+        );
+        await expect(
+          service.findPublicPage('hidden', {}),
+        ).rejects.toBeInstanceOf(NotFoundException);
+      }
+    },
+  );
+  it('sanitizes old FAQ cache entries without database writes', async () => {
+    const service = new PagesService(
+      {
+        page: {
+          findUnique: jest
+            .fn()
+            .mockResolvedValue({ kind: 'STANDARD', status: 'PUBLISHED' }),
+        },
+      } as never,
+      {
+        get: jest.fn().mockResolvedValue(
+          JSON.stringify({
+            sections: [
+              {
+                type: 'faq',
+                content: {
+                  items: [{ answer: '<p onclick="bad()">Safe</p>' }],
+                },
+              },
+            ],
+          }),
+        ),
+      } as never,
+    );
+    expect(
+      (await service.findPublicPage('home', {})).sections[0].content,
+    ).toEqual({ items: [{ answer: '<p>Safe</p>' }] });
   });
 });

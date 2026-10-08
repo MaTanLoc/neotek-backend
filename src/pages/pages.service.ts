@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { GetPageQueryDto } from './dto/get-page-query.dto';
 import { detailAvailability } from './solution-detail';
 import { articleText } from '../sections/validation/solution-detail.schemas';
+import { sanitizePublicFaqContent } from './public-html';
 
 const PAGE_CACHE_TTL_SECONDS = 300;
 
@@ -54,8 +55,7 @@ export class PagesService {
       if (cachedPage) {
         try {
           const cached = JSON.parse(cachedPage) as PublicPageResponse;
-          if (cached.kind !== 'SOLUTION_DETAIL') return cached;
-          // A stale Redis entry must never expose an unpublished detail.
+          // Every cache hit must recheck publication at the database boundary.
           const current = await this.prisma.page.findUnique({
             where: { slug },
             select: {
@@ -70,14 +70,17 @@ export class PagesService {
           });
           if (
             !current ||
-            current.kind !== 'SOLUTION_DETAIL' ||
             current.status !== 'PUBLISHED' ||
-            current.sections.length !== 2 ||
-            current.sections.some((section) => !section.enabled)
+            (current.kind === 'SOLUTION_DETAIL' &&
+              (current.sections.length !== 2 ||
+                current.sections.some((section) => !section.enabled)))
           )
-            throw new NotFoundException('Solution detail not published');
-          if (cached.updatedAt === current.updatedAt.toISOString())
-            return cached;
+            throw new NotFoundException('Page not published');
+          if (
+            current.kind !== 'SOLUTION_DETAIL' ||
+            cached.updatedAt === current.updatedAt.toISOString()
+          )
+            return this.sanitizeResponse(cached);
         } catch (error) {
           this.logger.warn(
             `Invalid cached page response for ${cacheKey}: ${
@@ -95,7 +98,7 @@ export class PagesService {
       );
     }
 
-    // Standard-page delivery remains unchanged; solution details are published-only.
+    // Admin draft retrieval uses its separate, authorized service.
     const page = await this.prisma.page.findUnique({
       where: { slug },
       include: {
@@ -114,7 +117,7 @@ export class PagesService {
       },
     });
 
-    if (!page) {
+    if (!page || page.status !== 'PUBLISHED') {
       throw new NotFoundException(`Page not found: ${slug}`);
     }
 
@@ -174,7 +177,12 @@ export class PagesService {
         .map((section) => ({
           key: section.key,
           type: section.type,
-          content: section.translations[0].content as object,
+          content:
+            section.type === 'faq'
+              ? sanitizePublicFaqContent(
+                  section.translations[0].content as object,
+                )
+              : (section.translations[0].content as object),
         })),
     };
 
@@ -193,5 +201,16 @@ export class PagesService {
     }
 
     return response;
+  }
+
+  private sanitizeResponse(response: PublicPageResponse): PublicPageResponse {
+    return {
+      ...response,
+      sections: response.sections.map((section) =>
+        section.type === 'faq'
+          ? { ...section, content: sanitizePublicFaqContent(section.content) }
+          : section,
+      ),
+    };
   }
 }

@@ -4,14 +4,10 @@ import * as cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { json } from 'express';
 import { AppModule } from './app.module';
+import { validateEnvironment } from './config/validate-environment';
 
 async function bootstrap(): Promise<void> {
-  if (
-    process.env.NODE_ENV === 'production' &&
-    (!process.env.FRONTEND_URL || !process.env.REDIS_URL)
-  ) {
-    throw new Error('FRONTEND_URL and REDIS_URL are required in production');
-  }
+  validateEnvironment(process.env);
   const app = await NestFactory.create(AppModule);
   app.setGlobalPrefix('api');
   app.use(helmet());
