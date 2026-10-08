@@ -23,7 +23,9 @@ export class LoginRateLimitGuard implements CanActivate {
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    const request = context
+      .switchToHttp()
+      .getRequest<AuthenticatedRequest & { body?: { email?: unknown } }>();
     const identifier = request.ip ?? 'unknown';
     const hash = createHash('sha256').update(identifier).digest('hex');
     try {
@@ -36,6 +38,21 @@ export class LoginRateLimitGuard implements CanActivate {
           'Too many login attempts',
           HttpStatus.TOO_MANY_REQUESTS,
         );
+      }
+      const email = request.body?.email;
+      if (typeof email === 'string' && email.length <= 254) {
+        const account = createHash('sha256')
+          .update(email.trim().toLowerCase())
+          .digest('hex');
+        const accountCount = await this.cache.incrementWithExpiry(
+          `auth:ratelimit:login-account:${account}`,
+          60,
+        );
+        if (accountCount > 20)
+          throw new HttpException(
+            'Too many login attempts',
+            HttpStatus.TOO_MANY_REQUESTS,
+          );
       }
       return true;
     } catch (error) {

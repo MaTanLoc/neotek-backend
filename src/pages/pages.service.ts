@@ -1,3 +1,4 @@
+import { safePublicMedia } from '../sections/validation/content-urls';
 import { resolveSharedTranslations } from '../sections/shared-content';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CacheService } from '../cache/cache.service';
@@ -81,20 +82,16 @@ export class PagesService {
             cached.updatedAt === current.updatedAt.toISOString()
           )
             return this.sanitizeResponse(cached);
-        } catch (error) {
+        } catch {
           this.logger.warn(
-            `Invalid cached page response for ${cacheKey}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
+            `Invalid cached page response for ${cacheKey}: dependency failure`,
           );
           await this.cache.del(cacheKey).catch(() => undefined);
         }
       }
-    } catch (error) {
+    } catch {
       this.logger.warn(
-        `Redis cache read failed for ${cacheKey}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `Redis cache read failed for ${cacheKey}: dependency failure`,
       );
     }
 
@@ -157,7 +154,7 @@ export class PagesService {
         );
     }
 
-    const response: PublicPageResponse = {
+    const response: PublicPageResponse = this.sanitizeResponse({
       ...(page.kind === 'SOLUTION_DETAIL'
         ? {
             kind: page.kind,
@@ -177,14 +174,9 @@ export class PagesService {
         .map((section) => ({
           key: section.key,
           type: section.type,
-          content:
-            section.type === 'faq'
-              ? sanitizePublicFaqContent(
-                  section.translations[0].content as object,
-                )
-              : (section.translations[0].content as object),
+          content: section.translations[0].content as object,
         })),
-    };
+    });
 
     try {
       await this.cache.set(
@@ -192,11 +184,9 @@ export class PagesService {
         JSON.stringify(response),
         PAGE_CACHE_TTL_SECONDS,
       );
-    } catch (error) {
+    } catch {
       this.logger.warn(
-        `Redis cache write failed for ${cacheKey}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `Redis cache write failed for ${cacheKey}: dependency failure`,
       );
     }
 
@@ -209,7 +199,15 @@ export class PagesService {
       sections: response.sections.map((section) =>
         section.type === 'faq'
           ? { ...section, content: sanitizePublicFaqContent(section.content) }
-          : section,
+          : ['solutionArticle', 'relatedSolutions'].includes(section.type)
+            ? section
+            : {
+                ...section,
+                content: safePublicMedia(
+                  section.content,
+                  section.type === 'trustedLogos',
+                ),
+              },
       ),
     };
   }

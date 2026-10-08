@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Response } from 'express';
+import { URL } from 'node:url';
 import { AuthService } from './auth.service';
 import {
   ADMIN_SESSION_COOKIE,
@@ -23,6 +24,7 @@ import { CsrfGuard } from './csrf.guard';
 import { LoginRateLimitGuard } from './login-rate-limit.guard';
 import { OriginGuard } from './origin.guard';
 import { CSRF_COOKIE } from './auth.constants';
+import { AdminRateLimitGuard } from './admin-rate-limit.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -34,7 +36,7 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(LoginRateLimitGuard)
+  @UseGuards(OriginGuard, LoginRateLimitGuard)
   async login(
     @Body() body: LoginDto,
     @Res({ passthrough: true }) response: Response,
@@ -43,7 +45,9 @@ export class AuthController {
       !body ||
       typeof body.email !== 'string' ||
       typeof body.password !== 'string' ||
-      !body.email.trim()
+      !body.email.trim() ||
+      body.email.length > 254 ||
+      Object.keys(body).some((key) => !['email', 'password'].includes(key))
     ) {
       throw new BadRequestException('Email and password are required');
     }
@@ -61,7 +65,7 @@ export class AuthController {
     return { user: request.user };
   }
 
-  @UseGuards(SessionAuthGuard)
+  @UseGuards(SessionAuthGuard, AdminRateLimitGuard)
   @Get('csrf')
   async csrf(
     @Req() request: AuthenticatedRequest,
@@ -74,7 +78,7 @@ export class AuthController {
     const csrfToken = await this.authService.createCsrfToken(sessionToken);
     response.cookie(CSRF_COOKIE, csrfToken, {
       httpOnly: false,
-      secure: process.env.NODE_ENV === 'production',
+      secure: this.secureCookie(),
       sameSite: 'lax',
       path: '/',
       maxAge: 28_800_000,
@@ -93,8 +97,9 @@ export class AuthController {
     if (token) {
       await this.authService.revoke(token);
     }
-    response.clearCookie(ADMIN_SESSION_COOKIE, { path: '/' });
-    response.clearCookie(CSRF_COOKIE, { path: '/' });
+    const options = { ...this.cookieOptions(), maxAge: undefined };
+    response.clearCookie(ADMIN_SESSION_COOKIE, options);
+    response.clearCookie(CSRF_COOKIE, { ...options, httpOnly: false });
     return { success: true };
   }
 
@@ -107,10 +112,25 @@ export class AuthController {
   } {
     return {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: this.secureCookie(),
       sameSite: 'lax',
       path: '/',
       maxAge: ADMIN_SESSION_TTL_SECONDS * 1000,
     };
+  }
+
+  private secureCookie(): boolean {
+    if (process.env.NODE_ENV === 'production') return true;
+    try {
+      const origin = new URL(
+        process.env.FRONTEND_URL || 'http://localhost:5173',
+      );
+      return !(
+        origin.protocol === 'http:' &&
+        ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname)
+      );
+    } catch {
+      return true;
+    }
   }
 }

@@ -19,6 +19,7 @@ import {
 import {
   detailSaveSchema,
   articleText,
+  contentWithinLimits,
 } from '../sections/validation/solution-detail.schemas';
 import { PageCacheInvalidationService } from '../cache/page-cache-invalidation.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -68,6 +69,10 @@ export class AdminService {
   }
 
   async saveSolutionDetail(id: string, input: unknown) {
+    if (!contentWithinLimits(input))
+      throw new BadRequestException(
+        'Content nesting or size exceeds allowed limits',
+      );
     const parsed = detailSaveSchema.safeParse(input);
     if (!parsed.success)
       throw new BadRequestException(

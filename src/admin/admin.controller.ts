@@ -1,3 +1,4 @@
+import { AdminRateLimitGuard } from '../auth/admin-rate-limit.guard';
 import {
   Body,
   Controller,
@@ -19,7 +20,7 @@ import { SessionAuthGuard } from '../auth/session-auth.guard';
 import { AdminService } from './admin.service';
 
 @Controller('admin')
-@UseGuards(SessionAuthGuard, RolesGuard)
+@UseGuards(SessionAuthGuard, RolesGuard, AdminRateLimitGuard)
 export class AdminController {
   private readonly service: AdminService;
 

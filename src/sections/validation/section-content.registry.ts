@@ -1,11 +1,22 @@
 import { z } from 'zod';
+import { isSafeContentUrl } from './content-urls';
 import {
   solutionDetailHeroSchema,
   solutionArticleSchema,
   relatedSolutionsSchema,
+  contentWithinLimits,
 } from './solution-detail.schemas';
 
-const optionalText = z.string().nullable().optional();
+const optionalText = z.string().max(12000).nullable().optional();
+const optionalMedia = z
+  .string()
+  .max(2048)
+  .refine(
+    (value) => isSafeContentUrl(value, true),
+    'Use HTTPS or a project path',
+  )
+  .nullable()
+  .optional();
 const sectionCopy = {
   eyebrow: optionalText,
   title: optionalText,
@@ -38,8 +49,8 @@ const ctaActionSchema = z
 const heroSlideSchema = z
   .object({
     key: z.string(),
-    desktopImage: optionalText,
-    mobileImage: optionalText,
+    desktopImage: optionalMedia,
+    mobileImage: optionalMedia,
     imagePosition: optionalText,
     mobileImagePosition: optionalText,
     overlay: optionalText,
@@ -95,7 +106,7 @@ const trustedLogoSchema = z
     height: z.number().min(1).max(800).optional(),
     scale: z.number().min(0.25).max(3).optional(),
     objectFit: z.enum(['contain', 'cover']).optional(),
-    url: optionalText,
+    url: optionalMedia,
   })
   .strict();
 
@@ -109,7 +120,7 @@ const solutionItemSchema = z
     label: optionalText,
     title: z.string(),
     description: optionalText,
-    image: optionalText,
+    image: optionalMedia,
     clusterKey: optionalText,
   })
   .strict();
@@ -125,7 +136,7 @@ const testimonialSchema = z
     name: z.string(),
     role: optionalText,
     company: optionalText,
-    image: optionalText,
+    image: optionalMedia,
     focalX: z.number().min(0).max(100).optional(),
     focalY: z.number().min(0).max(100).optional(),
     zoom: z.number().min(1).max(2.5).optional(),
@@ -175,7 +186,7 @@ const solutionGroupSchema = z
     title: optionalText,
     description: optionalText,
     visualLabel: optionalText,
-    visualSrc: optionalText,
+    visualSrc: optionalMedia,
   })
   .strict();
 
@@ -193,7 +204,7 @@ const solutionModuleSchema = z
       .optional(),
     ctaLabel: optionalText,
     icon: optionalText,
-    visualSrc: optionalText,
+    visualSrc: optionalMedia,
     title: optionalText,
     description: optionalText,
     bullets: z.array(z.string()),
@@ -214,7 +225,7 @@ const solutionOverviewContentSchema = z
             key: z.string(),
             title: z.string(),
             description: optionalText,
-            image: optionalText,
+            image: optionalMedia,
             imagePosition: optionalText,
             modules: z.array(
               z
@@ -277,6 +288,10 @@ export function validateSectionContent(
   sectionType: string,
   content: unknown,
 ): ValidatedSectionContent {
+  if (!contentWithinLimits(content))
+    throw new SectionContentValidationError(sectionType, [
+      { path: '$', message: 'Content nesting or size exceeds allowed limits' },
+    ]);
   if (!isRegisteredSectionType(sectionType)) {
     throw new SectionContentValidationError(sectionType, [
       { path: '$', message: 'Unknown section type' },

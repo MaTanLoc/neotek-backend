@@ -2,6 +2,21 @@
 import { URL } from 'node:url';
 import { z } from 'zod';
 
+// Bound recursive Zod/article traversal before parsing untrusted JSON.
+export function contentWithinLimits(value: unknown): boolean {
+  const pending = [{ value, depth: 0 }];
+  let count = 0;
+  while (pending.length) {
+    const current = pending.pop()!;
+    if (++count > 50000 || current.depth > 32) return false;
+    if (current.value && typeof current.value === 'object') {
+      for (const child of Object.values(current.value))
+        pending.push({ value: child, depth: current.depth + 1 });
+    }
+  }
+  return true;
+}
+
 export const detailSlugSchema = z
   .string()
   .min(1)

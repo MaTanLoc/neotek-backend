@@ -2,6 +2,30 @@ import { ExecutionContext } from '@nestjs/common';
 import { LoginRateLimitGuard } from './login-rate-limit.guard';
 
 describe('LoginRateLimitGuard', () => {
+  it('bounds distributed attempts against the same account without storing the email', async () => {
+    const cache = {
+      incrementWithExpiry: jest
+        .fn()
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(21),
+    };
+    const guard = new LoginRateLimitGuard(cache as never);
+    const context = {
+      switchToHttp: () => ({
+        getRequest: () => ({
+          ip: 'fixture-ip',
+          body: { email: ' Admin@Example.com ' },
+        }),
+      }),
+    } as never as ExecutionContext;
+    await expect(guard.canActivate(context)).rejects.toMatchObject({
+      status: 429,
+    });
+    expect(cache.incrementWithExpiry).toHaveBeenLastCalledWith(
+      expect.stringMatching(/^auth:ratelimit:login-account:[a-f0-9]{64}$/),
+      60,
+    );
+  });
   it('allows five attempts and rejects the sixth', async () => {
     const cache = { incrementWithExpiry: jest.fn() };
     cache.incrementWithExpiry

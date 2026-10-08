@@ -15,11 +15,9 @@ export class PageCacheInvalidationService {
     const key = buildPageCacheKey(slug, locale);
     try {
       await this.cache.del(key);
-    } catch (error) {
+    } catch {
       this.logger.warn(
-        `Redis page cache invalidation failed for ${key}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `Redis page cache invalidation failed for ${key}: dependency failure`,
       );
     }
   }

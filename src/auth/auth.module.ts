@@ -8,6 +8,7 @@ import { LoginRateLimitGuard } from './login-rate-limit.guard';
 import { OriginGuard } from './origin.guard';
 import { RolesGuard } from './roles.guard';
 import { SessionAuthGuard } from './session-auth.guard';
+import { AdminRateLimitGuard } from './admin-rate-limit.guard';
 
 @Module({
   imports: [CacheModule, PrismaModule],
@@ -19,7 +20,15 @@ import { SessionAuthGuard } from './session-auth.guard';
     CsrfGuard,
     LoginRateLimitGuard,
     OriginGuard,
+    AdminRateLimitGuard,
   ],
-  exports: [AuthService, SessionAuthGuard, RolesGuard, CsrfGuard, OriginGuard],
+  exports: [
+    AuthService,
+    SessionAuthGuard,
+    RolesGuard,
+    CsrfGuard,
+    OriginGuard,
+    AdminRateLimitGuard,
+  ],
 })
 export class AuthModule {}

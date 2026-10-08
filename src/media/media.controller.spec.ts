@@ -6,6 +6,7 @@ import { CsrfGuard } from '../auth/csrf.guard';
 import { OriginGuard } from '../auth/origin.guard';
 import { MediaController } from './media.controller';
 import { MediaService } from './media.service';
+import { CacheService } from '../cache/cache.service';
 import { ADMIN_SESSION_COOKIE, CSRF_COOKIE } from '../auth/auth.constants';
 
 describe('MediaController security', () => {
@@ -18,6 +19,10 @@ describe('MediaController security', () => {
     const module = await Test.createTestingModule({
       controllers: [MediaController],
       providers: [
+        {
+          provide: CacheService,
+          useValue: { incrementWithExpiry: jest.fn().mockResolvedValue(1) },
+        },
         SessionAuthGuard,
         CsrfGuard,
         OriginGuard,
@@ -39,7 +44,7 @@ describe('MediaController security', () => {
       await app.listen(0, '127.0.0.1');
       const url = `${await app.getUrl()}/admin/media/upload-signature`;
       const fetch = globalThis.fetch;
-      const cookie = `${ADMIN_SESSION_COOKIE}=session; ${CSRF_COOKIE}=csrf`;
+      const cookie = `${ADMIN_SESSION_COOKIE}=${'s'.repeat(43)}; ${CSRF_COOKIE}=csrf`;
       expect((await fetch(url, { method: 'POST' })).status).toBe(401);
       expect(
         (

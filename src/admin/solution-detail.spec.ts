@@ -101,4 +101,18 @@ describe('Atomic solution-detail manager saves', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(db.$transaction).not.toHaveBeenCalled();
   });
+  it('rejects excessive nesting with 400 before recursive validation or DB work', async () => {
+    let nested: unknown = { type: 'paragraph', content: [] };
+    for (let level = 0; level < 500; level++)
+      nested = { type: 'blockquote', content: [nested] };
+    const input = body();
+    input.translations.vi.article.doc = {
+      type: 'doc',
+      content: [nested],
+    } as never;
+    await expect(service.saveSolutionDetail('id', input)).rejects.toMatchObject(
+      { status: 400 },
+    );
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
 });

@@ -19,7 +19,7 @@ export class SessionAuthGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const token = request.cookies?.[ADMIN_SESSION_COOKIE];
-    if (!token) {
+    if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) {
       throw new UnauthorizedException('Authentication required');
     }
     request.user = await this.authService.getAuthenticatedUser(token);

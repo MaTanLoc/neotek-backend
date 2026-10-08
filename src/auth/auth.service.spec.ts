@@ -81,6 +81,35 @@ describe('AuthService', () => {
       status: 500,
     });
   });
+  it('rejects expired/malformed sessions and rechecks the current role without sliding TTL', async () => {
+    const service = new AuthService(prisma as never, cache as never);
+    cache.get.mockResolvedValueOnce(null).mockResolvedValueOnce('{invalid');
+    await expect(service.getAuthenticatedUser('fixture')).rejects.toMatchObject(
+      { status: 401 },
+    );
+    await expect(service.getAuthenticatedUser('fixture')).rejects.toMatchObject(
+      { status: 401 },
+    );
+    cache.get.mockResolvedValue(
+      JSON.stringify({
+        userId: 'fixture-user',
+        role: 'ADMIN',
+        createdAt: 'fixture',
+        lastSeenAt: 'fixture',
+      }),
+    );
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'fixture-user',
+      email: 'fixture@example.test',
+      name: null,
+      role: UserRole.EDITOR,
+      active: true,
+    });
+    expect((await service.getAuthenticatedUser('fixture')).role).toBe(
+      UserRole.EDITOR,
+    );
+    expect(cache.set).not.toHaveBeenCalled();
+  });
 
   it('returns the existing session-scoped CSRF token without overwriting it', async () => {
     const service = new AuthService(prisma as never, cache as never);

@@ -79,10 +79,8 @@ export class AuthService {
         JSON.stringify(session),
         ADMIN_SESSION_TTL_SECONDS,
       );
-    } catch (error) {
-      this.logger.error(
-        `Admin session store unavailable: ${error instanceof Error ? error.message : String(error)}`,
-      );
+    } catch {
+      this.logger.error(`Admin session store unavailable: dependency failure`);
       throw new InternalServerErrorException(
         'Authentication service unavailable',
       );
@@ -100,10 +98,8 @@ export class AuthService {
     let serialized: string | null;
     try {
       serialized = await this.cache.get(this.sessionKey(token));
-    } catch (error) {
-      this.logger.error(
-        `Admin session lookup unavailable: ${error instanceof Error ? error.message : String(error)}`,
-      );
+    } catch {
+      this.logger.error(`Admin session lookup unavailable: dependency failure`);
       throw new InternalServerErrorException(
         'Authentication service unavailable',
       );
@@ -149,10 +145,8 @@ export class AuthService {
         this.csrfKey(sessionToken),
         randomBytes(32).toString('base64url'),
       );
-    } catch (error) {
-      this.logger.error(
-        `CSRF token store unavailable: ${error instanceof Error ? error.message : String(error)}`,
-      );
+    } catch {
+      this.logger.error(`CSRF token store unavailable: dependency failure`);
       throw new InternalServerErrorException(
         'Authentication service unavailable',
       );
@@ -165,10 +159,8 @@ export class AuthService {
     let expected: string | null;
     try {
       expected = await this.cache.get(this.csrfKey(sessionToken));
-    } catch (error) {
-      this.logger.error(
-        `CSRF token lookup unavailable: ${error instanceof Error ? error.message : String(error)}`,
-      );
+    } catch {
+      this.logger.error(`CSRF token lookup unavailable: dependency failure`);
       throw new InternalServerErrorException(
         'Authentication service unavailable',
       );
@@ -186,10 +178,8 @@ export class AuthService {
     try {
       await this.cache.del(this.sessionKey(token));
       await this.cache.del(this.csrfKey(token));
-    } catch (error) {
-      this.logger.error(
-        `Admin session revoke failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+    } catch {
+      this.logger.error(`Admin session revoke failed: dependency failure`);
       throw new InternalServerErrorException(
         'Authentication service unavailable',
       );
