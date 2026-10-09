@@ -40,7 +40,7 @@ export function safePublicMedia(content: object, logo = false): object {
     if (
       typeof value === 'string' &&
       key === 'icon' &&
-      /^[A-Za-z0-9_-]+$/.test(value)
+      /^[A-Za-z0-9_-]+(?:\.(?:svg|png|webp|avif|gif|jpe?g))?$/i.test(value)
     )
       return value;
     if (

@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { configureHttpSecurity } from './config/http-security';
 import { AppModule } from './app.module';
+import { validateBookingEnvironment } from './booking/booking-environment';
 import {
   validateEnvironment,
   EnvironmentValidationError,
@@ -19,6 +20,7 @@ for (const event of ['uncaughtException', 'unhandledRejection'] as const) {
 
 async function bootstrap(): Promise<void> {
   validateEnvironment(process.env);
+  validateBookingEnvironment(process.env);
   const app = await NestFactory.create(AppModule, {
     bodyParser: false,
     abortOnError: false,

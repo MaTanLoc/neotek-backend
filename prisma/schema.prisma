@@ -24,15 +24,17 @@ enum PageKind {
 }
 
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String
-  name         String?
-  role         UserRole  @default(EDITOR)
-  active       Boolean   @default(true)
-  lastLoginAt  DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id            String         @id @default(cuid())
+  email         String         @unique
+  passwordHash  String
+  name          String?
+  role          UserRole       @default(EDITOR)
+  active        Boolean        @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  bookingEvents BookingEvent[]
+  bookingNotes  BookingNote[]
 }
 
 model Page {
@@ -132,4 +134,231 @@ model SiteSettingTranslation {
 
   @@unique([settingId, locale])
   @@index([locale])
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum BookingHoldStatus {
+  ACTIVE
+  CONVERTED
+  RELEASED
+  EXPIRED
+}
+
+enum ReservationState {
+  HOLD
+  BOOKING
+  RELEASED
+}
+
+enum NotificationStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  REVOKED
+}
+
+model CustomerAccount {
+  id                   String                      @id @default(cuid())
+  email                String                      @unique @db.VarChar(254)
+  passwordHash         String
+  authVersion          Int                         @default(0)
+  name                 String                      @db.VarChar(120)
+  active               Boolean                     @default(true)
+  emailVerifiedAt      DateTime?                   @db.Timestamptz(3)
+  verificationIssuedAt DateTime?                   @db.Timestamptz(3)
+  createdAt            DateTime                    @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime                    @updatedAt @db.Timestamptz(3)
+  verificationTokens   CustomerEmailVerification[]
+  passwordResets       CustomerPasswordReset[]
+  reservations         BookingReservation[]
+  holds                BookingHold[]
+  bookings             Booking[]
+  notifications        NotificationDelivery[]
+}
+
+model CustomerEmailVerification {
+  id            String                 @id @default(cuid())
+  customerId    String
+  tokenHash     String                 @unique @db.VarChar(64)
+  expiresAt     DateTime               @db.Timestamptz(3)
+  usedAt        DateTime?              @db.Timestamptz(3)
+  revokedAt     DateTime?              @db.Timestamptz(3)
+  createdAt     DateTime               @default(now()) @db.Timestamptz(3)
+  customer      CustomerAccount        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  notifications NotificationDelivery[]
+
+  @@index([customerId, createdAt])
+  @@index([expiresAt])
+}
+
+model CustomerPasswordReset {
+  id            String                 @id @default(cuid())
+  customerId    String
+  tokenHash     String                 @unique @db.VarChar(64)
+  expiresAt     DateTime               @db.Timestamptz(3)
+  usedAt        DateTime?              @db.Timestamptz(3)
+  revokedAt     DateTime?              @db.Timestamptz(3)
+  createdAt     DateTime               @default(now()) @db.Timestamptz(3)
+  customer      CustomerAccount        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  notifications NotificationDelivery[]
+
+  @@index([customerId, createdAt])
+  @@index([expiresAt])
+}
+
+model BookingResource {
+  id           String               @id @default(cuid())
+  key          String               @unique @db.VarChar(80)
+  name         String               @db.VarChar(120)
+  active       Boolean              @default(true)
+  reservations BookingReservation[]
+}
+
+// One ledger covers both temporary holds and submitted bookings. Custom SQL
+// supplies the GiST exclusion and one-HOLD-per-customer partial unique index.
+model BookingReservation {
+  id               String           @id @default(cuid())
+  customerId       String
+  resourceId       String
+  requestedStartAt DateTime         @db.Timestamptz(3)
+  requestedEndAt   DateTime         @db.Timestamptz(3)
+  busyStartAt      DateTime         @db.Timestamptz(3)
+  busyEndAt        DateTime         @db.Timestamptz(3)
+  timezone         String           @db.VarChar(80)
+  state            ReservationState @default(HOLD)
+  expiresAt        DateTime?        @db.Timestamptz(3)
+  releasedAt       DateTime?        @db.Timestamptz(3)
+  createdAt        DateTime         @default(now()) @db.Timestamptz(3)
+  customer         CustomerAccount  @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  resource         BookingResource  @relation(fields: [resourceId], references: [id], onDelete: Restrict)
+  hold             BookingHold?
+  booking          Booking?
+
+  @@index([resourceId, state, requestedStartAt])
+  @@index([customerId, state])
+  @@index([state, expiresAt])
+}
+
+model BookingHold {
+  id                 String             @id @default(cuid())
+  customerId         String
+  reservationId      String             @unique
+  moduleKey          String             @db.VarChar(120)
+  solutionLabel      String             @db.VarChar(240)
+  status             BookingHoldStatus  @default(ACTIVE)
+  idempotencyKey     String             @db.VarChar(80)
+  requestFingerprint String             @db.VarChar(64)
+  createdAt          DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime           @updatedAt @db.Timestamptz(3)
+  customer           CustomerAccount    @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  reservation        BookingReservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  booking            Booking?
+
+  @@unique([customerId, idempotencyKey])
+  @@index([customerId, status])
+}
+
+model Booking {
+  id                 String                 @id @default(cuid())
+  customerId         String
+  reservationId      String                 @unique
+  holdId             String                 @unique
+  contactName        String                 @db.VarChar(120)
+  contactEmail       String                 @db.VarChar(254)
+  contactPhone       String                 @db.VarChar(32)
+  contactCompany     String                 @db.VarChar(160)
+  customerMessage    String?                @db.VarChar(2000)
+  moduleKey          String                 @db.VarChar(120)
+  solutionLabel      String                 @db.VarChar(240)
+  locale             String                 @db.VarChar(2)
+  status             BookingStatus          @default(PENDING)
+  version            Int                    @default(1)
+  idempotencyKey     String                 @db.VarChar(80)
+  requestFingerprint String                 @db.VarChar(64)
+  confirmedAt        DateTime?              @db.Timestamptz(3)
+  cancelledAt        DateTime?              @db.Timestamptz(3)
+  completedAt        DateTime?              @db.Timestamptz(3)
+  createdAt          DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime               @updatedAt @db.Timestamptz(3)
+  customer           CustomerAccount        @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  reservation        BookingReservation     @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  hold               BookingHold            @relation(fields: [holdId], references: [id], onDelete: Restrict)
+  events             BookingEvent[]
+  notes              BookingNote[]
+  notifications      NotificationDelivery[]
+
+  @@unique([customerId, idempotencyKey])
+  @@index([customerId, createdAt, id])
+  @@index([status, createdAt, id])
+  @@index([createdAt, id])
+}
+
+model BookingEvent {
+  id            String                 @id @default(cuid())
+  bookingId     String
+  sequence      Int
+  type          String                 @db.VarChar(32)
+  fromStatus    BookingStatus?
+  toStatus      BookingStatus?
+  actorUserId   String?
+  reason        String?                @db.VarChar(1000)
+  createdAt     DateTime               @default(now()) @db.Timestamptz(3)
+  booking       Booking                @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  actorUser     User?                  @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  notifications NotificationDelivery[]
+
+  @@unique([bookingId, sequence])
+}
+
+model BookingNote {
+  id           String   @id @default(cuid())
+  bookingId    String
+  authorUserId String
+  text         String   @db.VarChar(2000)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  booking      Booking  @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  author       User     @relation(fields: [authorUserId], references: [id], onDelete: Restrict)
+
+  @@index([bookingId, createdAt, id])
+}
+
+model NotificationDelivery {
+  id                String                     @id @default(cuid())
+  deduplicationKey  String                     @unique @db.VarChar(240)
+  customerId        String
+  verificationId    String?
+  passwordResetId   String?
+  bookingId         String?
+  eventId           String?
+  template          String                     @db.VarChar(80)
+  recipient         String                     @db.VarChar(254)
+  locale            String                     @db.VarChar(2)
+  payload           Json
+  encryptedSecret   String?
+  status            NotificationStatus         @default(PENDING)
+  attempts          Int                        @default(0)
+  nextAttemptAt     DateTime                   @default(now()) @db.Timestamptz(3)
+  lockedAt          DateTime?                  @db.Timestamptz(3)
+  lockToken         String?
+  sentAt            DateTime?                  @db.Timestamptz(3)
+  lastErrorCode     String?                    @db.VarChar(80)
+  providerMessageId String?                    @db.VarChar(240)
+  createdAt         DateTime                   @default(now()) @db.Timestamptz(3)
+  customer          CustomerAccount            @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  verification      CustomerEmailVerification? @relation(fields: [verificationId], references: [id], onDelete: Restrict)
+  passwordReset     CustomerPasswordReset?     @relation(fields: [passwordResetId], references: [id], onDelete: Restrict)
+  booking           Booking?                   @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  event             BookingEvent?              @relation(fields: [eventId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextAttemptAt])
+  @@index([customerId, createdAt])
+  @@index([bookingId, createdAt])
 }

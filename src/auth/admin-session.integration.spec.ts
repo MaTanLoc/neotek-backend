@@ -11,6 +11,7 @@ import { CsrfGuard } from './csrf.guard';
 import { OriginGuard } from './origin.guard';
 import { RolesGuard } from './roles.guard';
 import { LoginRateLimitGuard } from './login-rate-limit.guard';
+import { AdminRateLimitGuard } from './admin-rate-limit.guard';
 import { ADMIN_SESSION_COOKIE, CSRF_COOKIE } from './auth.constants';
 import { AdminController } from '../admin/admin.controller';
 import { AdminService } from '../admin/admin.service';
@@ -51,9 +52,11 @@ redisDescribe('Admin session HTTP regression with real Redis', () => {
           .mockResolvedValue({ id: slug, slug, sections: [] }),
       },
       pageSection: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValue({ type: 'solutionOverview', page: { slug } }),
+        findUnique: jest.fn().mockResolvedValue({
+          type: 'solutionOverview',
+          page: { slug },
+          translations: [],
+        }),
       },
       pageSectionTranslation: {
         upsert: jest.fn().mockResolvedValue({ content: {} }),
@@ -78,6 +81,7 @@ redisDescribe('Admin session HTTP regression with real Redis', () => {
           RolesGuard,
           { provide: PrismaService, useValue: prisma },
           LoginRateLimitGuard,
+          AdminRateLimitGuard,
         ],
       })
         .overrideGuard(LoginRateLimitGuard)
@@ -94,7 +98,10 @@ redisDescribe('Admin session HTTP regression with real Redis', () => {
       const url = `${await app.getUrl()}/api`;
       const login = await fetch(`${url}/auth/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Origin: 'http://localhost:5173',
+        },
         body: JSON.stringify({
           email: user.email,
           password: 'regression password',
@@ -179,6 +186,9 @@ redisDescribe('Admin session HTTP regression with real Redis', () => {
     } finally {
       if (session && auth) await auth.revoke(session);
       if (cache) {
+        const identity = createHash('sha256').update(user.id).digest('hex');
+        await cache.del(`auth:ratelimit:csrf:${identity}`);
+        await cache.del(`auth:ratelimit:mutation:${identity}`);
         await cache.del(`cms:page:${slug}:vi`);
         await cache.del(`cms:page:${slug}:en`);
       }

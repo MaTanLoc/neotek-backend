@@ -8,9 +8,11 @@ import { PagesModule } from './pages/pages.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { SectionsModule } from './sections/sections.module';
 import { UsersModule } from './users/users.module';
+import { BookingModule } from './booking/booking.module';
 
 @Module({
   imports: [
+    BookingModule,
     AdminModule,
     AuthModule,
     UsersModule,

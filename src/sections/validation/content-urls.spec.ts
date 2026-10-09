@@ -2,6 +2,20 @@ import { isSafeContentUrl, safePublicMedia } from './content-urls';
 import { validateSectionContent } from './section-content.registry';
 
 describe('CMS media URL boundary', () => {
+  it('preserves custom icon filenames while rejecting unsafe icon references', () => {
+    const icon = 'neotek-shopping-basket-03-stroke-rounded.svg';
+    const content = {
+      items: [
+        { icon },
+        { icon: 'javascript:alert(1)' },
+        { icon: '../outside.svg' },
+      ],
+    };
+    expect(safePublicMedia(content)).toEqual({
+      items: [{ icon }, { icon: null }, { icon: null }],
+    });
+    expect(content.items[0].icon).toBe(icon);
+  });
   it.each([
     'javascript:alert(1)',
     'vbscript:msgbox(1)',
