@@ -9,6 +9,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CacheService } from '../cache/cache.service';
 import { NotificationService } from '../notification/notification.service';
 import { VerificationSecret } from '../notification/verification-secret';
+import { GoogleCalendarService } from './google-calendar.service';
+import { GoogleCalendarClient } from './google-calendar.client';
 
 const testUrl = process.env.BOOKING_TEST_DATABASE_URL;
 const postgres = testUrl ? describe : describe.skip;
@@ -128,6 +130,322 @@ postgres('Phase 1B real isolated PostgreSQL', () => {
     });
   }
 
+  it('Phase 2C serializes Meet generation, persists event ID across failures, confirms separately and keeps cancellation durable', async () => {
+    const previous = process.env;
+    const key = randomBytes(32).toString('base64');
+    process.env = {
+      ...previous,
+      GOOGLE_CALENDAR_ENABLED: 'true',
+      GOOGLE_CALENDAR_CLIENT_ID: 'calendar-test',
+      GOOGLE_CALENDAR_CLIENT_SECRET: 'fixture',
+      GOOGLE_CALENDAR_REDIRECT_URI:
+        'http://localhost:3000/api/integrations/google/calendar/callback',
+      GOOGLE_CALENDAR_ORGANIZER_EMAIL: 'organizer@example.test',
+      GOOGLE_CALENDAR_ENCRYPTION_KEY: key,
+    };
+    const client = {
+      createMeeting: jest
+        .fn()
+        .mockResolvedValue('https://meet.google.com/abc-defg-hij'),
+      deleteEvent: jest.fn().mockRejectedValue(new Error('provider failure')),
+    };
+    const calendar = new GoogleCalendarService(
+      db as PrismaService,
+      {} as CacheService,
+      client as unknown as GoogleCalendarClient,
+    );
+    const service = new BookingService(
+      db as PrismaService,
+      notifications,
+      policy,
+      'admin@example.test',
+      calendar,
+    );
+    try {
+      await db.organizerCredential.upsert({
+        where: { id: 'google-calendar-organizer' },
+        create: {
+          id: 'google-calendar-organizer',
+          email: 'organizer@example.test',
+          clientId: 'calendar-test',
+          encryptedRefreshToken: new VerificationSecret(key).seal(
+            'refresh-fixture',
+            'google-calendar-organizer',
+          ),
+        },
+        update: {
+          email: 'organizer@example.test',
+          clientId: 'calendar-test',
+          encryptedRefreshToken: new VerificationSecret(key).seal(
+            'refresh-fixture',
+            'google-calendar-organizer',
+          ),
+        },
+      });
+      const a = await customer(),
+        operator = await admin(),
+        editor = await admin('EDITOR');
+      const h = await service.acquireHold(a, holdBody(slot()));
+      const b = await service.finalize(a, finalBody(h.id));
+      await expect(calendar.createMeeting(editor.id, b.id)).rejects.toThrow(
+        'Admin required',
+      );
+      const results = await Promise.all([
+        calendar.createMeeting(operator.id, b.id),
+        calendar.createMeeting(operator.id, b.id),
+      ]);
+      expect(results[0]).toEqual(results[1]);
+      expect(client.createMeeting).toHaveBeenCalledTimes(1);
+      const generated = await db.booking.findUniqueOrThrow({
+        where: { id: b.id },
+      });
+      expect(generated).toMatchObject({
+        status: 'PENDING',
+        version: 1,
+        meetingUrl: 'https://meet.google.com/abc-defg-hij',
+      });
+      expect(generated.externalCalendarEventId).toMatch(/^[0-9a-f]{64}$/);
+      await service.transition(operator.id, b.id, {
+        toStatus: 'CONFIRMED',
+        expectedVersion: 1,
+        meetingUrl: generated.meetingUrl,
+      });
+      await expect(calendar.createMeeting(operator.id, b.id)).rejects.toThrow(
+        'pending',
+      );
+      await expect(
+        service.transition(operator.id, b.id, {
+          toStatus: 'CANCELLED',
+          expectedVersion: 2,
+          reason: 'test cleanup',
+        }),
+      ).resolves.toMatchObject({ status: 'CANCELLED' });
+      expect(client.deleteEvent).toHaveBeenCalledWith(
+        'refresh-fixture',
+        generated.externalCalendarEventId,
+      );
+      expect(
+        (await db.booking.findUniqueOrThrow({ where: { id: b.id } }))
+          .meetingUrl,
+      ).toBe(generated.meetingUrl);
+
+      const h2 = await service.acquireHold(a, holdBody(slot()));
+      const b2 = await service.finalize(a, finalBody(h2.id));
+      client.createMeeting.mockRejectedValue(new Error('provider unavailable'));
+      await expect(
+        calendar.createMeeting(operator.id, b2.id),
+      ).rejects.toThrow();
+      const failed = await db.booking.findUniqueOrThrow({
+        where: { id: b2.id },
+      });
+      expect(failed.status).toBe('PENDING');
+      expect(failed.meetingUrl).toBeNull();
+      expect(failed.externalCalendarEventId).toBeTruthy();
+      await expect(
+        calendar.createMeeting(operator.id, b2.id),
+      ).rejects.toThrow();
+      expect(client.createMeeting.mock.calls[1][1]).toBe(
+        client.createMeeting.mock.calls[2][1],
+      );
+      // Manual fallback continues even with a reserved event ID and provider failure.
+      await expect(
+        service.transition(operator.id, b2.id, {
+          toStatus: 'CONFIRMED',
+          expectedVersion: 1,
+          meetingUrl: 'https://meet.google.com/xyz-abcd-efg',
+        }),
+      ).resolves.toMatchObject({ status: 'CONFIRMED' });
+    } finally {
+      process.env = previous;
+    }
+  });
+
+  it('V1.1 confirmation requires Meet, persists owner-only URL, locks later edits and rejects NO_SHOW', async () => {
+    const a = await customer(),
+      other = await customer(),
+      times = slot(),
+      operator = await admin();
+    const hold = await booking.acquireHold(a, holdBody(times)),
+      saved = await booking.finalize(a, finalBody(hold.id));
+    for (const meetingUrl of [
+      undefined,
+      '',
+      'https://evil.test/abc-defg-hij',
+      'http://meet.google.com/abc-defg-hij',
+    ]) {
+      await expect(
+        booking.transition(operator.id, saved.id, {
+          toStatus: 'CONFIRMED',
+          expectedVersion: 1,
+          ...(meetingUrl === undefined ? {} : { meetingUrl }),
+        }),
+      ).rejects.toMatchObject({ status: 400 });
+    }
+    expect(
+      (await db.booking.findUniqueOrThrow({ where: { id: saved.id } })).status,
+    ).toBe('PENDING');
+    await expect(
+      db.booking.update({
+        where: { id: saved.id },
+        data: { status: 'CONFIRMED' },
+      }),
+    ).rejects.toThrow('Valid Google Meet URL required');
+    const meetingUrl = 'https://meet.google.com/abc-defg-hij';
+    await booking.transition(operator.id, saved.id, {
+      toStatus: 'CONFIRMED',
+      expectedVersion: 1,
+      meetingUrl,
+    });
+    await expect(
+      booking.transition(operator.id, saved.id, {
+        toStatus: 'NO_SHOW',
+        expectedVersion: 2,
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      db.booking.update({
+        where: { id: saved.id },
+        data: { status: 'NO_SHOW' },
+      }),
+    ).rejects.toThrow('Invalid booking status transition');
+    await expect(
+      db.booking.update({
+        where: { id: saved.id },
+        data: { meetingUrl: 'https://meet.google.com/xyz-abcd-efg' },
+      }),
+    ).rejects.toThrow('read-only');
+    expect(await booking.ownBooking(a, saved.id)).toMatchObject({
+      meetingUrl,
+      status: 'CONFIRMED',
+    });
+    const range = {
+      from: times.start.toISOString(),
+      to: times.end.toISOString(),
+    };
+    expect(
+      (await booking.ownBookings(a, 1, undefined, range)).items.map(
+        (b) => b.id,
+      ),
+    ).toEqual([saved.id]);
+    expect(
+      (await booking.ownBookings(other, 1, undefined, range)).items,
+    ).toEqual([]);
+    await expect(
+      booking.ownBookings(a, 1, undefined, { from: range.to, to: range.from }),
+    ).rejects.toThrow('Invalid date range');
+  });
+
+  it('V1.1 provider failure leaves confirmation durable and its event snapshot retryable', async () => {
+    const a = await customer(),
+      operator = await admin(),
+      hold = await booking.acquireHold(a, holdBody(slot()));
+    const saved = await booking.finalize(a, finalBody(hold.id)),
+      meetingUrl = 'https://meet.google.com/abc-defg-hij';
+    await booking.transition(operator.id, saved.id, {
+      toStatus: 'CONFIRMED',
+      expectedVersion: 1,
+      meetingUrl,
+    });
+    const delivery = await db.notificationDelivery.findFirstOrThrow({
+      where: { bookingId: saved.id, template: 'BOOKING_CONFIRMED_CUSTOMER' },
+    });
+    expect(delivery.payload).toMatchObject({
+      meetingUrl,
+      contactName: 'Customer',
+      solution: 'ERP consultation',
+      timezone: policy.timezone,
+    });
+    await db.notificationDelivery.updateMany({
+      where: { status: 'PENDING' },
+      data: { nextAttemptAt: new Date(Date.now() + 86400000) },
+    });
+    await db.notificationDelivery.update({
+      where: { id: delivery.id },
+      data: { nextAttemptAt: new Date(0) },
+    });
+    await notifications.dispatchOne(
+      db,
+      { send: jest.fn().mockRejectedValue(new Error('provider unavailable')) },
+      secret,
+    );
+    expect(
+      (await db.booking.findUniqueOrThrow({ where: { id: saved.id } })).status,
+    ).toBe('CONFIRMED');
+    expect(
+      await db.notificationDelivery.findUniqueOrThrow({
+        where: { id: delivery.id },
+      }),
+    ).toMatchObject({
+      status: 'PENDING',
+      attempts: 1,
+      lastErrorCode: 'EMAIL_DELIVERY_FAILED',
+    });
+    await db.notificationDelivery.update({
+      where: { id: delivery.id },
+      data: { nextAttemptAt: new Date(0) },
+    });
+    const send = jest.fn().mockResolvedValue({ messageId: 'retry-accepted' });
+    await notifications.dispatchOne(db, { send }, secret);
+    expect(send.mock.calls[0][0].payload.meetingUrl).toBe(meetingUrl);
+    expect(
+      await db.notificationDelivery.findUniqueOrThrow({
+        where: { id: delivery.id },
+      }),
+    ).toMatchObject({ status: 'SENT', attempts: 2 });
+  });
+
+  it.each(['CANCELLED', 'COMPLETED'] as const)(
+    'V1.1 %s is terminal in service and database',
+    async (status) => {
+      const a = await customer(),
+        operator = await admin(),
+        hold = await booking.acquireHold(a, holdBody(slot()));
+      const saved = await booking.finalize(a, finalBody(hold.id));
+      let version = 1;
+      if (status === 'COMPLETED') {
+        await booking.transition(operator.id, saved.id, {
+          toStatus: 'CONFIRMED',
+          expectedVersion: version++,
+          meetingUrl: 'https://meet.google.com/abc-defg-hij',
+        });
+        const start = new Date(Date.now() - 7200000),
+          end = new Date(Date.now() - 3600000);
+        await db.bookingReservation.update({
+          where: { id: saved.reservationId },
+          data: {
+            requestedStartAt: start,
+            requestedEndAt: end,
+            busyStartAt: start,
+            busyEndAt: end,
+          },
+        });
+      }
+      await booking.transition(operator.id, saved.id, {
+        toStatus: status,
+        expectedVersion: version++,
+        ...(status === 'CANCELLED' ? { reason: 'Customer requested' } : {}),
+      });
+      for (const toStatus of ['CONFIRMED', 'CANCELLED', 'COMPLETED']) {
+        await expect(
+          booking.transition(operator.id, saved.id, {
+            toStatus,
+            expectedVersion: version,
+            ...(toStatus === 'CONFIRMED'
+              ? { meetingUrl: 'https://meet.google.com/abc-defg-hij' }
+              : {}),
+            reason: 'Try reopen',
+          }),
+        ).rejects.toThrow('INVALID_TRANSITION');
+      }
+      await expect(
+        db.booking.update({
+          where: { id: saved.id },
+          data: { status: 'PENDING' },
+        }),
+      ).rejects.toThrow('Invalid booking status transition');
+    },
+  );
+
   it('replays all migrations, seeds exactly one resource and preserves CMS publication', async () => {
     expect(
       await db.bookingResource.count({ where: { key: 'neotek-consultation' } }),
@@ -188,6 +506,7 @@ postgres('Phase 1B real isolated PostgreSQL', () => {
       if (status === 'CONFIRMED')
         await booking.transition((await admin()).id, saved.id, {
           toStatus: status,
+          meetingUrl: 'https://meet.google.com/abc-defg-hij',
           expectedVersion: 1,
         });
       await expect(booking.acquireHold(b, holdBody(times))).rejects.toThrow(
@@ -456,6 +775,7 @@ postgres('Phase 1B real isolated PostgreSQL', () => {
     await expect(
       booking.transition((await admin('EDITOR')).id, saved.id, {
         toStatus: 'CONFIRMED',
+        meetingUrl: 'https://meet.google.com/abc-defg-hij',
         expectedVersion: 1,
       }),
     ).rejects.toThrow('Admin required');
@@ -468,6 +788,7 @@ postgres('Phase 1B real isolated PostgreSQL', () => {
     ).rejects.toThrow('INVALID_TRANSITION');
     await booking.transition(operator.id, saved.id, {
       toStatus: 'CONFIRMED',
+      meetingUrl: 'https://meet.google.com/abc-defg-hij',
       expectedVersion: 1,
     });
     await expect(
@@ -481,7 +802,7 @@ postgres('Phase 1B real isolated PostgreSQL', () => {
       'Booking not found',
     );
     expect(await booking.ownBooking(a, saved.id)).toMatchObject({
-      meetingUrl: null,
+      meetingUrl: 'https://meet.google.com/abc-defg-hij',
       status: 'CONFIRMED',
     });
     expect(
@@ -508,11 +829,12 @@ postgres('Phase 1B real isolated PostgreSQL', () => {
     ).toBe(4);
   });
 
-  it('registration is durable, duplicate-safe and independent of CMS identity; login does not require verification', async () => {
+  it('registration is durable, duplicate-safe and independent of CMS identity; login requires verification', async () => {
     const email = `${randomUUID()}@example.test`,
       input = {
         email: email.toUpperCase(),
         name: 'Name',
+        phone: '0900000000',
         password: 'customer secure password',
         locale: 'vi',
       };
@@ -524,15 +846,15 @@ postgres('Phase 1B real isolated PostgreSQL', () => {
     const account = await db.customerAccount.findUniqueOrThrow({
       where: { email },
     });
-    expect(account.passwordHash.startsWith('$argon2id$')).toBe(true);
+    expect(account.passwordHash?.startsWith('$argon2id$')).toBe(true);
     expect(account.emailVerifiedAt).toBeNull();
     expect(await db.user.count({ where: { email } })).toBe(0);
-    expect(
-      await customers.authenticate(
-        { email, password: input.password },
-        'login',
-      ),
-    ).toMatchObject({ realm: 'customer', emailVerifiedAt: null });
+    await expect(
+      customers.authenticate({ email, password: input.password }, 'login'),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: expect.objectContaining({ message: 'EMAIL_NOT_VERIFIED' }),
+    });
     await expect(
       customers.authenticate(
         { email, password: 'wrong secure password' },
@@ -555,6 +877,7 @@ postgres('Phase 1B real isolated PostgreSQL', () => {
       {
         email,
         name: 'Verify',
+        phone: '0900000000',
         password: 'a long customer password',
         locale: 'en',
       },
@@ -795,6 +1118,7 @@ postgres('Phase 1B real isolated PostgreSQL', () => {
       {
         email,
         name: 'Delivery',
+        phone: '0900000000',
         password: 'a secure delivery password',
         locale: 'vi',
       },

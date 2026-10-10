@@ -9,6 +9,12 @@ import { AuthModule } from '../auth/auth.module';
 import { CacheModule } from '../cache/cache.module';
 import { BookingController } from './booking.controller';
 import { AdminBookingController } from './admin-booking.controller';
+import { GoogleCalendarService } from './google-calendar.service';
+import { GoogleCalendarClient } from './google-calendar.client';
+import {
+  AdminGoogleCalendarController,
+  GoogleCalendarCallbackController,
+} from './google-calendar.controller';
 
 @Module({
   imports: [
@@ -18,13 +24,24 @@ import { AdminBookingController } from './admin-booking.controller';
     AuthModule,
     CacheModule,
   ],
-  controllers: [BookingController, AdminBookingController],
+  controllers: [
+    BookingController,
+    AdminBookingController,
+    AdminGoogleCalendarController,
+    GoogleCalendarCallbackController,
+  ],
   providers: [
+    GoogleCalendarService,
+    GoogleCalendarClient,
     {
       provide: BookingService,
-      inject: [PrismaService, NotificationService],
-      useFactory: (db: PrismaService, notifications: NotificationService) =>
-        new BookingService(db, notifications),
+      inject: [PrismaService, NotificationService, GoogleCalendarService],
+      useFactory: (
+        db: PrismaService,
+        notifications: NotificationService,
+        calendar: GoogleCalendarService,
+      ) =>
+        new BookingService(db, notifications, undefined, undefined, calendar),
     },
   ],
   exports: [BookingService],

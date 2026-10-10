@@ -100,7 +100,7 @@ export function configureHttpSecurity(app: INestApplication): () => void {
       'Permissions-Policy',
       'camera=(), microphone=(), geolocation=()',
     );
-    if (/^\/api\/(auth|admin|users)(\/|$)/i.test(request.path))
+    if (/^\/api\/(auth|admin|users|customer-auth)(\/|$)/i.test(request.path))
       response.setHeader('Cache-Control', 'no-store');
     if (draining && request.path !== '/api/health/live') {
       response
@@ -116,6 +116,7 @@ export function configureHttpSecurity(app: INestApplication): () => void {
     next();
   });
   app.use(cookieParser());
+  app.use('/api/customer-auth/google', json({ limit: '12kb' }));
   app.use(json({ limit: '2mb' }));
   app.use(urlencoded({ extended: false, limit: '64kb', parameterLimit: 100 }));
   app.enableCors({

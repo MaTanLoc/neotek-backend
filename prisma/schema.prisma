@@ -141,7 +141,7 @@ enum BookingStatus {
   CONFIRMED
   COMPLETED
   CANCELLED
-  NO_SHOW
+  NO_SHOW // Legacy persisted/audit value only; V1.1 does not allow this transition.
 }
 
 enum BookingHoldStatus {
@@ -168,9 +168,10 @@ enum NotificationStatus {
 model CustomerAccount {
   id                   String                      @id @default(cuid())
   email                String                      @unique @db.VarChar(254)
-  passwordHash         String
+  passwordHash         String?
   authVersion          Int                         @default(0)
   name                 String                      @db.VarChar(120)
+  phone                String?                     @db.VarChar(32)
   active               Boolean                     @default(true)
   emailVerifiedAt      DateTime?                   @db.Timestamptz(3)
   verificationIssuedAt DateTime?                   @db.Timestamptz(3)
@@ -178,10 +179,23 @@ model CustomerAccount {
   updatedAt            DateTime                    @updatedAt @db.Timestamptz(3)
   verificationTokens   CustomerEmailVerification[]
   passwordResets       CustomerPasswordReset[]
+  oauthIdentities      CustomerOAuthIdentity[]
   reservations         BookingReservation[]
   holds                BookingHold[]
   bookings             Booking[]
   notifications        NotificationDelivery[]
+}
+
+model CustomerOAuthIdentity {
+  id              String          @id @default(cuid())
+  provider        String          @db.VarChar(20)
+  providerSubject String          @db.VarChar(255)
+  customerId      String
+  createdAt       DateTime        @default(now()) @db.Timestamptz(3)
+  customer        CustomerAccount @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, providerSubject])
+  @@unique([customerId, provider])
 }
 
 model CustomerEmailVerification {
@@ -276,6 +290,8 @@ model Booking {
   contactPhone       String                 @db.VarChar(32)
   contactCompany     String                 @db.VarChar(160)
   customerMessage    String?                @db.VarChar(2000)
+  meetingUrl         String?                @db.VarChar(200)
+  externalCalendarEventId String?            @db.VarChar(128)
   moduleKey          String                 @db.VarChar(120)
   solutionLabel      String                 @db.VarChar(240)
   locale             String                 @db.VarChar(2)
@@ -299,6 +315,15 @@ model Booking {
   @@index([customerId, createdAt, id])
   @@index([status, createdAt, id])
   @@index([createdAt, id])
+}
+
+// Singleton backend credential. Never include this model in Admin/public JSON.
+model OrganizerCredential {
+  id                    String   @id @db.VarChar(80)
+  email                 String   @db.VarChar(320)
+  clientId              String   @db.VarChar(320)
+  encryptedRefreshToken String   @db.Text
+  updatedAt             DateTime @updatedAt @db.Timestamptz(3)
 }
 
 model BookingEvent {

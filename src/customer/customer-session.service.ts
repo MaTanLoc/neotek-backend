@@ -34,10 +34,11 @@ export class CustomerSessionService {
   async issue(customerId: string, expectedVersion?: number) {
     const account = await this.db.customerAccount.findUnique({
       where: { id: customerId },
-      select: { active: true, authVersion: true },
+      select: { active: true, authVersion: true, emailVerifiedAt: true },
     });
     if (
       !account?.active ||
+      !account.emailVerifiedAt ||
       (expectedVersion !== undefined &&
         expectedVersion !== (account.authVersion ?? 0))
     )
@@ -79,6 +80,10 @@ export class CustomerSessionService {
         authVersion: true,
       },
     });
+    if (customer?.active && !customer.emailVerifiedAt) {
+      await this.revoke(token);
+      throw new UnauthorizedException('EMAIL_NOT_VERIFIED');
+    }
     if (
       !customer?.active ||
       (session.authVersion ?? 0) !== (customer.authVersion ?? 0)

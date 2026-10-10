@@ -8,4 +8,12 @@ coverage/
 *.log
 
 /generated/prisma
+# Generated browser/test evidence
+docs/*-browser/
+docs/**/*-browser/
+docs/**/screenshots/
+docs/**/test-results/
+docs/**/playwright-report/
+
+# Local generated artifacts
 .local/

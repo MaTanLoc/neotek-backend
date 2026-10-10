@@ -4,6 +4,7 @@ import {
   customerIdentity,
   finalizeInput,
   parseInput,
+  transitionInput,
 } from './booking-domain';
 import { bookingPolicy, validateInterval } from './booking-policy';
 import { BookingService } from './booking.service';
@@ -80,7 +81,6 @@ describe('Booking policy and trusted domain boundaries', () => {
       'PENDING:CANCELLED',
       'CONFIRMED:COMPLETED',
       'CONFIRMED:CANCELLED',
-      'CONFIRMED:NO_SHOW',
     ]);
     for (const from of Object.values(BookingStatus))
       for (const to of Object.values(BookingStatus)) {
@@ -93,6 +93,48 @@ describe('Booking policy and trusted domain boundaries', () => {
     expect(() =>
       assertTransition('CONFIRMED', 'COMPLETED', now, start, end),
     ).toThrow('BOOKING_NOT_ENDED');
+  });
+  it.each([
+    '',
+    'http://meet.google.com/abc-defg-hij',
+    'https://meet.google.com.evil.test/abc-defg-hij',
+    'https://evil.test/abc-defg-hij',
+    'https://meet.google.com/abc-defg-hij?token=x',
+    'https://user@meet.google.com/abc-defg-hij',
+  ])('rejects invalid confirmation URL %s', (meetingUrl) => {
+    expect(() =>
+      parseInput(transitionInput, {
+        toStatus: 'CONFIRMED',
+        expectedVersion: 1,
+        meetingUrl,
+      }),
+    ).toThrow();
+  });
+  it('requires Meet for confirmation and rejects meeting edits on other transitions and NO_SHOW', () => {
+    expect(() =>
+      parseInput(transitionInput, {
+        toStatus: 'CONFIRMED',
+        expectedVersion: 1,
+      }),
+    ).toThrow();
+    expect(
+      parseInput(transitionInput, {
+        toStatus: 'CONFIRMED',
+        expectedVersion: 1,
+        meetingUrl: 'https://meet.google.com/abc-defg-hij',
+      }).meetingUrl,
+    ).toBe('https://meet.google.com/abc-defg-hij');
+    expect(() =>
+      parseInput(transitionInput, {
+        toStatus: 'CANCELLED',
+        expectedVersion: 2,
+        reason: 'Requested',
+        meetingUrl: 'https://meet.google.com/abc-defg-hij',
+      }),
+    ).toThrow();
+    expect(() =>
+      parseInput(transitionInput, { toStatus: 'NO_SHOW', expectedVersion: 2 }),
+    ).toThrow();
   });
   it('rejects client privileges, alternate email, anonymous/admin principal and missing mandatory contact fields', () => {
     expect(() =>

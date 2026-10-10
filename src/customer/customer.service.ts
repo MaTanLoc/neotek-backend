@@ -24,6 +24,13 @@ import { customerEmail, customerPassword } from './customer-input';
 const accountInput = z
   .object({
     email: customerEmail,
+    phone: z
+      .string()
+      .trim()
+      .min(1)
+      .max(32)
+      .regex(/^\+?[0-9 () .-]+$/)
+      .refine((value) => value.replace(/\D/g, '').length >= 7),
     name: z
       .string()
       .trim()
@@ -89,7 +96,12 @@ export class CustomerService {
     try {
       await this.db.$transaction(async (tx) => {
         const account = await tx.customerAccount.create({
-          data: { email: data.email, name: data.name, passwordHash },
+          data: {
+            email: data.email,
+            name: data.name,
+            phone: data.phone,
+            passwordHash,
+          },
         });
         await this.issue(tx, account.id, data.email, data.locale);
       });
@@ -114,8 +126,10 @@ export class CustomerService {
       account?.passwordHash ?? dummyHash,
       data.password,
     );
-    if (!account || !account.active || !valid)
+    if (!account || !account.passwordHash || !account.active || !valid)
       throw new UnauthorizedException('Invalid email or password');
+    if (!account.emailVerifiedAt)
+      throw new ForbiddenException('EMAIL_NOT_VERIFIED');
     return {
       realm: 'customer' as const,
       customerId: account.id,
@@ -124,6 +138,26 @@ export class CustomerService {
       emailVerifiedAt: account.emailVerifiedAt,
       authVersion: account.authVersion,
     };
+  }
+
+  async resendByEmail(input: unknown, ip: string): Promise<{ accepted: true }> {
+    await this.rate('resend-ip', ip, 10, 3600);
+    const data = parseInput(
+      z.object({ email: customerEmail, locale: z.enum(['vi', 'en']) }).strict(),
+      input,
+    );
+    await this.rate('resend-email', data.email, 5, 3600);
+    const account = await this.db.customerAccount.findUnique({
+      where: { email: data.email },
+      select: { id: true },
+    });
+    if (account)
+      await this.resend(
+        { realm: 'customer', customerId: account.id },
+        data.locale,
+        ip,
+      );
+    return { accepted: true };
   }
 
   async resend(
@@ -139,8 +173,7 @@ export class CustomerService {
     await this.db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "CustomerAccount" WHERE "id" = ${id} FOR UPDATE`;
       const account = await tx.customerAccount.findUnique({ where: { id } });
-      if (!account?.active)
-        throw new ForbiddenException('Customer authentication required');
+      if (!account?.active) return;
       const now = await databaseTime(tx);
       // Identical response for verified/cooldown; no token or account state leaks.
       if (

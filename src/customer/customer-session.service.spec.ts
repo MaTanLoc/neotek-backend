@@ -19,6 +19,7 @@ describe('Customer session security', () => {
     db.customerAccount.findUnique.mockResolvedValue({
       active: true,
       authVersion: 0,
+      emailVerifiedAt: new Date(),
     });
     service = new CustomerSessionService(
       cache as unknown as CacheService,
@@ -69,6 +70,31 @@ describe('Customer session security', () => {
       service.resolve(randomBytes(32).toString('base64url')),
     ).rejects.toThrow();
     expect(db.customerAccount.findUnique).not.toHaveBeenCalled();
+  });
+  it('rejects issuance and revokes legacy sessions for unverified accounts', async () => {
+    const token = randomBytes(32).toString('base64url');
+    db.customerAccount.findUnique.mockResolvedValue({
+      id: 'customer',
+      active: true,
+      authVersion: 0,
+      emailVerifiedAt: null,
+    });
+    await expect(service.issue('customer', 0)).rejects.toMatchObject({
+      status: 401,
+    });
+    expect(cache.set).not.toHaveBeenCalled();
+    cache.get.mockResolvedValue(
+      JSON.stringify({
+        realm: 'customer',
+        customerId: 'customer',
+        authVersion: 0,
+      }),
+    );
+    await expect(service.resolve(token)).rejects.toMatchObject({ status: 401 });
+    expect(cache.del.mock.calls).toEqual([
+      [service.key(token)],
+      [service.key(token, 'csrf')],
+    ]);
   });
   it('invalidates every old session generation and rejects a stale login racing reset', async () => {
     cache.get.mockResolvedValue(

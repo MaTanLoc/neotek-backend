@@ -52,4 +52,10 @@ export class AdminBookingController {
   ) {
     return this.bookings.addNote(req.user!.id, id, input);
   }
+
+  @Post(':id/google-meet')
+  @UseGuards(CsrfGuard, OriginGuard)
+  googleMeet(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.bookings.createGoogleMeet(req.user!.id, id);
+  }
 }

@@ -67,6 +67,10 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return this.command(() => this.client.get(key));
   }
 
+  async consume(key: string): Promise<string | null> {
+    return this.command(() => this.client.getDel(key));
+  }
+
   async set(key: string, value: string, ttlSeconds?: number): Promise<void> {
     if (ttlSeconds === undefined) {
       await this.command(() => this.client.set(key, value));

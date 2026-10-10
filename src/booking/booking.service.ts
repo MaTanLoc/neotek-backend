@@ -7,6 +7,7 @@ import { Prisma, UserRole } from '@prisma/client';
 import { z } from 'zod';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
+import { GoogleCalendarService } from './google-calendar.service';
 import {
   BookingPolicy,
   bookingPolicy,
@@ -30,16 +31,19 @@ export class BookingService {
   private readonly notifications: NotificationService;
   readonly policy: BookingPolicy;
   private readonly adminEmail: string;
+  private readonly calendar?: GoogleCalendarService;
   constructor(
     db: PrismaService,
     notifications: NotificationService,
     policy: BookingPolicy = bookingPolicy(),
     adminEmail: string = process.env.BOOKING_ADMIN_EMAIL ?? '',
+    calendar?: GoogleCalendarService,
   ) {
     this.db = db;
     this.notifications = notifications;
     this.policy = policy;
     this.adminEmail = adminEmail;
+    this.calendar = calendar;
   }
 
   private transaction<T>(
@@ -382,7 +386,7 @@ export class BookingService {
 
   async transition(adminUserId: string, bookingId: string, input: unknown) {
     const data = parseInput(transitionInput, input);
-    return this.transaction(async (tx) => {
+    const result = await this.transaction(async (tx) => {
       const admin = await tx.user.findUnique({ where: { id: adminUserId } });
       if (!admin?.active || admin.role !== UserRole.ADMIN)
         throw new ForbiddenException('Admin required');
@@ -410,7 +414,9 @@ export class BookingService {
         data: {
           status: data.toStatus,
           version: { increment: 1 },
-          ...(data.toStatus === 'CONFIRMED' ? { confirmedAt: now } : {}),
+          ...(data.toStatus === 'CONFIRMED'
+            ? { confirmedAt: now, meetingUrl: data.meetingUrl }
+            : {}),
           ...(data.toStatus === 'CANCELLED' ? { cancelledAt: now } : {}),
           ...(data.toStatus === 'COMPLETED' ? { completedAt: now } : {}),
         },
@@ -440,10 +446,29 @@ export class BookingService {
           template: `BOOKING_${data.toStatus}_CUSTOMER`,
           recipient: booking.contactEmail,
           locale: booking.locale,
-          payload: { bookingId },
+          payload: {
+            bookingId,
+            contactName: booking.contactName,
+            solution: booking.solutionLabel,
+            requestedStartAt:
+              booking.reservation.requestedStartAt.toISOString(),
+            requestedEndAt: booking.reservation.requestedEndAt.toISOString(),
+            timezone: booking.reservation.timezone,
+            meetingUrl: updated.meetingUrl,
+          },
         });
       return updated;
     });
+    // Commit cancellation first: provider cleanup cannot roll back business state.
+    if (data.toStatus === 'CANCELLED' && result.externalCalendarEventId)
+      await this.calendar?.cancelEvent(result.externalCalendarEventId);
+    return result;
+  }
+
+  createGoogleMeet(adminUserId: string, bookingId: string) {
+    if (!this.calendar)
+      throw new BadRequestException('Google Calendar unavailable');
+    return this.calendar.createMeeting(adminUserId, bookingId);
   }
 
   async ownBooking(principal: CustomerPrincipal, bookingId: string) {
@@ -459,7 +484,7 @@ export class BookingService {
       requestedStartAt: booking.reservation.requestedStartAt,
       requestedEndAt: booking.reservation.requestedEndAt,
       timezone: booking.reservation.timezone,
-      meetingUrl: null,
+      meetingUrl: booking.meetingUrl,
       contactName: booking.contactName,
       contactCompany: booking.contactCompany,
     };
@@ -469,11 +494,29 @@ export class BookingService {
     principal: CustomerPrincipal,
     page = 1,
     period?: 'upcoming' | 'past',
+    range: { from?: string; to?: string } = {},
   ) {
     const customerId = customerIdentity(principal);
+    if (
+      !!range.from !== !!range.to ||
+      (range.from && range.to && new Date(range.to) <= new Date(range.from))
+    )
+      throw new BadRequestException('Invalid date range');
     const now = await this.transaction(databaseTime);
     const where: Prisma.BookingWhereInput = {
       customerId,
+      ...(range.from && range.to
+        ? {
+            AND: [
+              {
+                reservation: {
+                  requestedStartAt: { lt: new Date(range.to) },
+                  requestedEndAt: { gt: new Date(range.from) },
+                },
+              },
+            ],
+          }
+        : {}),
       ...(period === 'upcoming'
         ? {
             status: { in: ['PENDING', 'CONFIRMED'] },
@@ -508,7 +551,7 @@ export class BookingService {
         timezone: b.reservation.timezone,
         contactName: b.contactName,
         contactCompany: b.contactCompany,
-        meetingUrl: null,
+        meetingUrl: b.meetingUrl,
       })),
       total,
       page,
@@ -591,7 +634,7 @@ export class BookingService {
         .object({
           search: z.string().trim().max(120).optional(),
           status: z
-            .enum(['PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW'])
+            .enum(['PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED'])
             .optional(),
           from: z.iso.datetime({ offset: true }).optional(),
           to: z.iso.datetime({ offset: true }).optional(),
@@ -692,7 +735,8 @@ export class BookingService {
       events: b.events,
       notes: b.notes,
       notifications: b.notifications,
-      meetingUrl: null,
+      meetingUrl: b.meetingUrl,
+      externalCalendarEventId: b.externalCalendarEventId,
     };
   }
 

@@ -92,6 +92,20 @@ redisTest('Customer sessions with real Redis', () => {
         status: 401,
       });
       await expect(sessions.csrf(token)).rejects.toMatchObject({ status: 401 });
+      db.customerAccount.findUnique.mockResolvedValue({
+        id,
+        active: true,
+        emailVerifiedAt: null,
+        authVersion: 1,
+      });
+      await expect(sessions.issue(id, 1)).rejects.toMatchObject({
+        status: 401,
+      });
+      await expect(sessions.resolve(fresh)).rejects.toMatchObject({
+        status: 401,
+      });
+      expect(await cache.get(sessions.key(fresh))).toBeNull();
+      expect(await cache.get(sessions.key(fresh, 'csrf'))).toBeNull();
     } finally {
       if (token) await sessions.revoke(token);
       if (second) await sessions.revoke(second);

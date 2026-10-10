@@ -97,16 +97,18 @@ export class BookingController {
   @Get('mine')
   @UseGuards(CustomerGuard)
   mine(@Req() req: CustomerRequest, @Query() query: unknown) {
-    const { page, period } = parseInput(
+    const { page, period, from, to } = parseInput(
       z
         .object({
           page: z.coerce.number().int().min(1).max(10000).default(1),
           period: z.enum(['upcoming', 'past']).optional(),
+          from: z.iso.datetime({ offset: true }).optional(),
+          to: z.iso.datetime({ offset: true }).optional(),
         })
         .strict(),
       query,
     );
-    return this.bookings.ownBookings(req.customer, page, period);
+    return this.bookings.ownBookings(req.customer, page, period, { from, to });
   }
   @Get('mine/:id')
   @UseGuards(CustomerGuard)

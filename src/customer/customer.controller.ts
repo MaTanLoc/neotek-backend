@@ -15,6 +15,7 @@ import { OriginGuard } from '../auth/origin.guard';
 import { parseInput } from '../booking/booking-domain';
 import { CustomerService } from './customer.service';
 import { CustomerPasswordRecoveryService } from './customer-password-recovery.service';
+import { CustomerGoogleService } from './customer-google.service';
 import {
   CUSTOMER_COOKIE,
   CUSTOMER_TTL,
@@ -49,14 +50,17 @@ export class CustomerController {
   private readonly customers: CustomerService;
   private readonly sessions: CustomerSessionService;
   private readonly recovery: CustomerPasswordRecoveryService;
+  private readonly google: CustomerGoogleService;
   constructor(
     customers: CustomerService,
     sessions: CustomerSessionService,
     recovery: CustomerPasswordRecoveryService,
+    google: CustomerGoogleService,
   ) {
     this.customers = customers;
     this.sessions = sessions;
     this.recovery = recovery;
+    this.google = google;
   }
   @Post('register')
   @HttpCode(202)
@@ -72,10 +76,34 @@ export class CustomerController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const { authVersion, ...customer } = await this.customers.authenticate(
+    const principal = await this.customers.authenticate(
       input,
       req.ip ?? 'unknown',
     );
+    return this.finishLogin(principal, req, res);
+  }
+  @Post('google')
+  @HttpCode(200)
+  @UseGuards(OriginGuard)
+  async googleLogin(
+    @Body() input: unknown,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.finishLogin(
+      await this.google.authenticate(input, req.ip ?? 'unknown'),
+      req,
+      res,
+    );
+  }
+  private async finishLogin(
+    principal:
+      | Awaited<ReturnType<CustomerService['authenticate']>>
+      | Awaited<ReturnType<CustomerGoogleService['authenticate']>>,
+    req: Request,
+    res: Response,
+  ) {
+    const { authVersion, ...customer } = principal;
     const token = await this.sessions.issue(customer.customerId, authVersion);
     const old = req.cookies?.[CUSTOMER_COOKIE];
     if (typeof old === 'string') await this.sessions.revoke(old);
@@ -133,12 +161,8 @@ export class CustomerController {
   }
   @Post('resend-verification')
   @HttpCode(202)
-  @UseGuards(CustomerGuard, OriginGuard, CustomerMutationGuard)
-  resend(@Body() input: unknown, @Req() req: CustomerRequest) {
-    const { locale } = parseInput(
-      z.object({ locale: z.enum(['vi', 'en']) }).strict(),
-      input,
-    );
-    return this.customers.resend(req.customer, locale, req.ip ?? 'unknown');
+  @UseGuards(OriginGuard)
+  resend(@Body() input: unknown, @Req() req: Request) {
+    return this.customers.resendByEmail(input, req.ip ?? 'unknown');
   }
 }

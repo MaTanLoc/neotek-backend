@@ -41,7 +41,7 @@ export async function databaseTime(
 
 const transitions: Record<BookingStatus, BookingStatus[]> = {
   PENDING: ['CONFIRMED', 'CANCELLED'],
-  CONFIRMED: ['COMPLETED', 'CANCELLED', 'NO_SHOW'],
+  CONFIRMED: ['COMPLETED', 'CANCELLED'],
   COMPLETED: [],
   CANCELLED: [],
   NO_SHOW: [],
@@ -57,7 +57,7 @@ export function assertTransition(
     throw new BookingConflict('INVALID_TRANSITION');
   if (to === 'CONFIRMED' && now >= start)
     throw new BookingConflict('BOOKING_ALREADY_STARTED');
-  if ((to === 'COMPLETED' || to === 'NO_SHOW') && now < end)
+  if (to === 'COMPLETED' && now < end)
     throw new BookingConflict('BOOKING_NOT_ENDED');
 }
 
@@ -110,8 +110,18 @@ export const finalizeInput = z
   .strict();
 export const transitionInput = z
   .object({
-    toStatus: z.enum(['CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW']),
+    toStatus: z.enum(['CONFIRMED', 'COMPLETED', 'CANCELLED']),
     expectedVersion: z.number().int().positive(),
     reason: z.string().trim().min(1).max(1000).optional(),
+    meetingUrl: z
+      .string()
+      .trim()
+      .max(200)
+      .regex(/^https:\/\/meet\.google\.com\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/)
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine((data) => data.toStatus !== 'CONFIRMED' || !!data.meetingUrl)
+  .refine(
+    (data) => data.toStatus === 'CONFIRMED' || data.meetingUrl === undefined,
+  );

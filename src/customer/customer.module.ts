@@ -12,11 +12,15 @@ import { AuthModule } from '../auth/auth.module';
 import { CustomerController } from './customer.controller';
 import { CustomerSessionService } from './customer-session.service';
 import { CustomerGuard, CustomerMutationGuard } from './customer.guards';
+import { CustomerGoogleService } from './customer-google.service';
+import { GoogleTokenVerifier } from './google-token-verifier';
 
 @Module({
   imports: [PrismaModule, CacheModule, NotificationModule, AuthModule],
   controllers: [CustomerController],
   providers: [
+    GoogleTokenVerifier,
+    CustomerGoogleService,
     {
       provide: CustomerPasswordRecoveryService,
       inject: [PrismaService, CacheService, NotificationService],
